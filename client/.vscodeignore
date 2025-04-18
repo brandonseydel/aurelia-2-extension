@@ -1,0 +1,5 @@
+out/    # exclude build output
+src/    # exclude source files
+node_modules/ # exclude node modules
+
+*.map   # exclude source maps 

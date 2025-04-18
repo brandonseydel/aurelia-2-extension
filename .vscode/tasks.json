@@ -1,0 +1,93 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "npm",
+            "script": "compile",
+            "problemMatcher": {
+                "base": "$tsc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^",
+                    "endsPattern": "^(Watching for|Found 0 errors).*$"
+                }
+            },
+            "isBackground": true,
+            "presentation": {
+                "reveal": "never"
+            },
+            "group": "build"
+        },
+        {
+            "type": "npm",
+            "script": "watch",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "never"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Watch Client",
+            "type": "npm",
+            "script": "watch",
+            "path": "client/",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "presentation": {
+                "group": "watchers",
+                "reveal": "never"
+            }
+        },
+        {
+            "label": "Watch Server",
+            "type": "npm",
+            "script": "watch",
+            "path": "server/",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "presentation": {
+                "group": "watchers",
+                "reveal": "never"
+            }
+        },
+        {
+            "label": "Build Client & Server",
+            "dependsOn": ["Compile Client", "Compile Server"],
+            "dependsOrder": "parallel",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Watch Client & Server",
+            "dependsOn": ["Watch Client", "Watch Server"],
+            "dependsOrder": "parallel",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Compile Client",
+            "type": "npm",
+            "script": "compile",
+            "path": "client/",
+            "problemMatcher": "$tsc",
+            "group": "build"
+        },
+        {
+            "label": "Compile Server",
+            "type": "npm",
+            "script": "compile",
+            "path": "server/",
+            "problemMatcher": "$tsc",
+            "group": "build"
+        }
+    ]
+} 
