@@ -14,7 +14,6 @@
                 "0": { "name": "punctuation.definition.interpolation.end.aurelia" }
             },
             "name": "meta.interpolation.aurelia",
-            "contentName": "source.ts.embedded.aurelia",
             "patterns": [
                 {
                     "include": "source.ts"
