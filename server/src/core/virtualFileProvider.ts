@@ -3,7 +3,7 @@ import * as path from 'path';
 import { URI } from 'vscode-uri';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Diagnostic, Connection, TextDocuments } from 'vscode-languageserver/node';
-import { AureliaDocumentInfo, DetailedMapping } from '../common/types'; 
+import { AureliaDocumentInfo, DetailedMapping } from '../common/types';
 import { log } from '../utils/logger';
 import { kebabToPascalCase, fileExistsOnDisk } from '../utils/utilities';
 import { extractExpressionsFromHtml } from './htmlParser';
@@ -19,8 +19,8 @@ type ViewModelMembersCache = Map<string, { content: string | undefined; members:
  * Helper function to get member names from the ViewModel TS file, using a cache.
  */
 export function getViewModelMemberNames(
-    vmClassName: string, 
-    vmFsPath: string, 
+    vmClassName: string,
+    vmFsPath: string,
     languageService: ts.LanguageService,
     viewModelMembersCache: ViewModelMembersCache // <<< Add cache parameter
 ): string[] {
@@ -51,7 +51,7 @@ export function getViewModelMemberNames(
         return ['message'];
     }
     const typeChecker = program.getTypeChecker();
-    const sourceFile = program.getSourceFile(vmFsPath); 
+    const sourceFile = program.getSourceFile(vmFsPath);
     if (!sourceFile) {
         log('warn', `[getViewModelMemberNames] Could not get source file object for ${vmFsPath}.`);
         return ['message'];
@@ -84,7 +84,7 @@ export function getViewModelMemberNames(
     } else { log('warn', `[getViewModelMemberNames] Could not find exported class declaration node for ${vmClassName}.`); }
     // --- End Analysis logic ---
 
-    if (memberNames.length === 0) { 
+    if (memberNames.length === 0) {
         log('warn', `[getViewModelMemberNames] No members found for ${vmClassName}, using fallback.`);
         memberNames = ['message'];
     }
@@ -102,13 +102,13 @@ export function getViewModelMemberNames(
  * Needs access to Aurelia documents map, virtual files map, language service, and connection.
  */
 export function updateVirtualFile(
-    htmlUri: string, 
+    htmlUri: string,
     htmlContent: string,
-    aureliaDocuments: Map<string, AureliaDocumentInfo>, 
-    virtualFiles: Map<string, { content: string; version: number }>, 
-    languageService: ts.LanguageService, 
+    aureliaDocuments: Map<string, AureliaDocumentInfo>,
+    virtualFiles: Map<string, { content: string; version: number }>,
+    languageService: ts.LanguageService,
     documents: TextDocuments<TextDocument>,
-    connection: Connection, 
+    connection: Connection,
     viewModelMembersCache: ViewModelMembersCache // <<< Add cache parameter
 ): boolean {
     const htmlFsPath = URI.parse(htmlUri).fsPath;
@@ -152,15 +152,15 @@ export function updateVirtualFile(
     // Generate virtual file URI and path
     const virtualFileUriString = URI.parse(htmlUri + ".virtual.ts").toString();
     const virtualFsPath = URI.parse(virtualFileUriString).fsPath;
-    
+
     // Calculate relative import path
     let relativeImportPath = path.relative(path.dirname(virtualFsPath), vmFsPath)
-        .replace(/\\/g, "/") 
-        .replace(/\.ts$/, ""); 
+        .replace(/\\/g, "/")
+        .replace(/\.ts$/, "");
     if (!relativeImportPath.startsWith(".")) {
         relativeImportPath = "./" + relativeImportPath;
     }
-  
+
     const expressions = extractExpressionsFromHtml(htmlContent);
     // +++ Pass cache to getViewModelMemberNames +++
     const memberNames = getViewModelMemberNames(vmClassName, vmFsPath, languageService, viewModelMembersCache);
@@ -171,15 +171,15 @@ export function updateVirtualFile(
     virtualContent += `import { ${vmClassName} } from '${relativeImportPath}';\n\n`;
     virtualContent += `declare const _this: ${vmClassName};\n\n`;
     virtualContent += `// --- Expression Placeholders ---\n`;
-  
+
     const detailedMappings: DetailedMapping[] = [];
-    let currentOffset = virtualContent.length; 
+    let currentOffset = virtualContent.length;
 
     expressions.forEach((expr, index) => {
         const placeholderVarName = `___expr_${index + 1}`;
         let transformedExpression = expr.expression;
         const originalHtmlExprOffset = expr.htmlLocation.startOffset;
-        
+
         // +++ Define a temporary type for storing intermediate calculation +++
         type TransformationWithTemp = DetailedMapping['transformations'][0] & { originalVirtualStart: number };
         let currentExpressionTransformsTemp: TransformationWithTemp[] = []; // Use temporary type
@@ -191,14 +191,14 @@ export function updateVirtualFile(
             currentVirtualExprContent = "_this";
         } else {
             // +++ Use matchAll for potentially more robust iteration +++
-            const identifierRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g; 
+            const identifierRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
             let currentIndex = 0;
             let result = '';
 
             for (const match of expr.expression.matchAll(identifierRegex)) {
                 const capturedIdentifier = match[1];
                 const matchIndex = match.index ?? 0; // matchAll provides index
-                
+
                 // Append the text between the last match and this one
                 result += expr.expression.substring(currentIndex, matchIndex);
 
@@ -213,9 +213,9 @@ export function updateVirtualFile(
                     const virtualValueRelativeStart = result.length;
                     currentExpressionTransformsTemp.push({
                         htmlRange: { start: htmlStart, end: htmlEnd },
-                        virtualRange: { start: -1, end: -1 }, 
+                        virtualRange: { start: -1, end: -1 },
                         offsetDelta: offsetDelta,
-                        originalVirtualStart: virtualValueRelativeStart 
+                        originalVirtualStart: virtualValueRelativeStart
                     });
                 }
                 result += replacement;
@@ -226,7 +226,7 @@ export function updateVirtualFile(
             currentVirtualExprContent = result;
             // +++ End matchAll change +++
         }
-        
+
         // Construct line and calculate ranges
         const linePrefix = `const ${placeholderVarName} = (`;
         const lineSuffix = `); // Origin: ${expr.type}\n`;
@@ -240,7 +240,7 @@ export function updateVirtualFile(
         // +++ Create the final array with the correct type +++
         const finalTransformations: DetailedMapping['transformations'] = currentExpressionTransformsTemp.map(t => {
             const transformedLength = (t.htmlRange.end - t.htmlRange.start) + t.offsetDelta;
-            const finalVirtualStart = virtualValueStart + t.originalVirtualStart; 
+            const finalVirtualStart = virtualValueStart + t.originalVirtualStart;
             const finalVirtualEnd = finalVirtualStart + transformedLength;
             return {
                 htmlRange: t.htmlRange,
@@ -268,13 +268,15 @@ export function updateVirtualFile(
     aureliaDocuments.set(htmlUriString, { virtualUri: virtualFileUriString, mappings: detailedMappings, vmClassName, vmFsPath });
 
     // Trigger diagnostics update via imported function
-    updateDiagnostics(
-        htmlUriString, 
+    setImmediate(() => updateDiagnostics(
+        htmlUriString,
         documents,
-        aureliaDocuments, 
-        languageService, 
+        aureliaDocuments,
+        languageService,
         connection
+    ),
     );
+    // to ensure it runs after the current event loop tick.
 
     return true;
 }

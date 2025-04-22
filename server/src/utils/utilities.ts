@@ -41,13 +41,39 @@ export function calculateLocationFromOffset(content: string, targetOffset: numbe
 }
 
 // Function to explicitly check if a file exists on disk
+const fileExistsCache = new Map<string, { exists: boolean, timestamp: number }>();
+const FILE_CACHE_TTL = 10000; // 10 seconds cache TTL
+
 export function fileExistsOnDisk(filePath: string): boolean {
+  const now = Date.now();
+  const cachedResult = fileExistsCache.get(filePath);
+  
+  // If we have a valid cache entry that hasn't expired
+  if (cachedResult && (now - cachedResult.timestamp) < FILE_CACHE_TTL) {
+    return cachedResult.exists;
+  }
+  
   try {
-    return ts.sys.fileExists(filePath);
+    const exists = ts.sys.fileExists(filePath);
+    // Update cache with new result
+    fileExistsCache.set(filePath, { exists, timestamp: now });
+    return exists;
   } catch (e) {
     log('error', `[fileExistsOnDisk] Error checking ${filePath}`, e);
+    // Cache negative result too, but with shorter TTL in case of errors
+    fileExistsCache.set(filePath, { exists: false, timestamp: now });
     return false;
   }
+}
+
+// Function to explicitly clear the file existence cache
+export function clearFileExistsCache(): void {
+  fileExistsCache.clear();
+}
+
+// Function to remove a specific entry from the file existence cache
+export function invalidateFileExistsCache(filePath: string): void {
+  fileExistsCache.delete(filePath);
 }
 
 // Helper: Converts PascalCase or camelCase to kebab-case
