@@ -158,50 +158,62 @@ export function handleCompletionRequest(
                 log('debug', `[onCompletion] Dot trigger detected. Preceding tag found via regex: ${tagNameFromRegex}`);
 
                 if (tagNameFromRegex) {
+                    // Get component info IF available, but don't require it for suffix logic
                     const componentInfo = aureliaProjectComponents.get(tagNameFromRegex);
-                    if (componentInfo?.type === 'element' && componentInfo.bindables && Array.isArray(componentInfo.bindables)) {
-                        const textEndingBeforeDot = document.getText(LSPRange.create(Position.create(0, 0), document.positionAt(offset - 1)));
-                        const wordMatch = textEndingBeforeDot.match(/([a-zA-Z0-9_-]+)$/);
-                        const wordBeforeDot = wordMatch ? wordMatch[1] : '';
-                        log('debug', `  - Word before dot: '${wordBeforeDot}'`);
 
-                        // Check if the word is a known bindable OR a standard attribute like 'class' or 'style'
-                        const isKnownBindable = componentInfo?.bindables?.includes(wordBeforeDot) ?? false;
-                        // Let's be more general: check if it looks like a valid attribute name.
-                        // This avoids needing a hardcoded list and works for data-*, aria-*, etc.
+                    // Logic to find the word before the dot
+                    const textEndingBeforeDot = document.getText(LSPRange.create(Position.create(0, 0), document.positionAt(offset - 1)));
+                    const wordMatch = textEndingBeforeDot.match(/([a-zA-Z0-9_-]+)$/);
+                    const wordBeforeDot = wordMatch ? wordMatch[1] : '';
+                    log('debug', `  - Word before dot: '${wordBeforeDot}'`);
+
+                    if (wordBeforeDot) {
+                        // Check if it's a known bindable for this specific component (if it is a component)
+                        const isKnownBindable = componentInfo?.type === 'element' && (componentInfo.bindables?.includes(wordBeforeDot) ?? false);
+                        // Check if it looks like a valid attribute name generally
                         const isValidAttributeName = /^[a-zA-Z][a-zA-Z0-9-]*$/.test(wordBeforeDot);
 
-                        if (wordBeforeDot && (isKnownBindable || isValidAttributeName)) {
+                        // Provide suffixes if it's a known bindable OR a valid attribute name pattern
+                        if (isKnownBindable || isValidAttributeName) {
                             const detailContext = isKnownBindable ? `bindable property '${wordBeforeDot}'` : `attribute '${wordBeforeDot}'`;
-                            log('debug', `  - Word matches ${isKnownBindable ? 'bindable' : 'valid attribute name'}: ${wordBeforeDot}. Providing suffix completions.`);
+                            log('debug', `  - Word matches criteria (${isKnownBindable ? 'bindable' : 'valid attribute name'}): ${wordBeforeDot}. Providing suffix completions.`);
+
                             AURELIA_BINDING_SUFFIXES.forEach(suffix => {
-                                // Provide suffix completion like 'bind', 'one-way' etc.
-                                if (suffix !== '.ref') { // Typically .ref isn't used this way
+                                if (suffix !== '.ref') { // Skip .ref
                                     htmlCompletions.push({
                                         label: suffix.substring(1), // Suggest 'bind', 'one-way' etc.
-                                        kind: CompletionItemKind.Event, // Using Event kind like before
+                                        kind: CompletionItemKind.Event,
                                         insertText: suffix.substring(1), // Insert just the command part
                                         insertTextFormat: InsertTextFormat.PlainText,
                                         detail: `Aurelia command ${suffix} on ${detailContext}`,
-                                        // Filter text includes the original attribute for better matching if user typed 'class.bi'
                                         filterText: `${wordBeforeDot}${suffix}`,
-                                        // Prioritize bindable suggestions slightly? Or keep unified?
                                         sortText: `0_${isKnownBindable ? 'bindable' : 'attribute'}_${wordBeforeDot}${suffix}`
                                     });
                                 }
                             });
-                            // Return *only* these suffix completions when triggered by a dot after a valid attribute/bindable
+
+                            // Return *only* these suffix completions
                             const distinctMap = new Map<string, CompletionItem>();
                             htmlCompletions.forEach(item => { if (!distinctMap.has(item.label)) { distinctMap.set(item.label, item); } });
                             const distinctCompletions = Array.from(distinctMap.values());
                             log('debug', `[onCompletion] HTML Context (Dot Trigger for ${detailContext}): Returning ${distinctCompletions.length} distinct command completions.`);
                             return distinctCompletions;
                         }
+                        // else: Dot was after a word, but it wasn't a known bindable or valid attribute name pattern.
+                        // In this case, we don't want to provide suffix completions.
+                        log('debug', `  - Word '${wordBeforeDot}' before dot is not a known bindable or valid attribute name pattern. No suffix completions.`);
+                    }
+                     else {
+                        // else: Dot was likely typed immediately after opening tag or in whitespace, not after an attribute word.
+                        log('debug', `  - No valid word character found immediately before the dot. No suffix completions.`);
                     }
                 }
+                // If we reach here, it means either:
+                // - No preceding tag was found
+                // - A tag was found, but the dot wasn't immediately after a known bindable or valid attribute name.
+                // In these cases, we should not return any completions from this dot-trigger logic.
                 log('debug', `[onCompletion] Dot trigger logic finished without providing attribute suffix completions. No further HTML completions from this branch.`);
-                // Return undefined or an empty array to signify no completions from this specific dot-trigger path
-                return undefined;
+                return undefined; // Explicitly return no completions for this trigger path
             }
             else if (!provideAttributeCompletions && !provideElementCompletions && (charBeforeCursor === ' ' || triggerChar === undefined)) {
                 const textBeforeOffset = document.getText(LSPRange.create(Position.create(0, 0), params.position));
