@@ -32,4 +32,30 @@ export interface AureliaDocumentInfo {
     mappings: DetailedMapping[];
     vmClassName: string; // ViewModel class name
     vmFsPath: string; // ViewModel file system path
-} 
+}
+
+// --- Added Type Definitions --- 
+/**
+ * Represents information about a discovered Aurelia component (element or attribute).
+ */
+export interface AureliaComponentInfo {
+    uri: string;
+    /** Is this a custom element or a custom attribute? */
+    type: 'element' | 'attribute';
+    /** The canonical name of the component (e.g., 'my-element' or 'my-attribute'). */
+    name: string;
+    /** List of bindable property names, if applicable. */
+    bindables?: string[];
+    /** The TypeScript class name, if known. */
+    className?: string;
+     /** Path to the source file containing the definition */
+     sourceFile?: string;
+}
+
+
+/**
+ * Map holding discovered Aurelia components in the project.
+ * Key: component name (e.g., 'my-element', 'my-attribute')
+ * Value: Component information
+ */
+export type AureliaProjectComponentMap = Map<string, AureliaComponentInfo>; 

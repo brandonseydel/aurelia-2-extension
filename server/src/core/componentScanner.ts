@@ -1,17 +1,13 @@
 import * as ts from 'typescript';
 import * as path from 'path';
+import * as fs from 'fs';
 import { URI } from 'vscode-uri';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { log } from '../utils/logger';
 import { 
     fileExistsOnDisk} from '../utils/utilities';
-
-// Type for the component map
-type AureliaProjectComponentMap = Map<string, { 
-    uri: string, 
-    type: 'element' | 'attribute', 
-    name: string, 
-    bindables?: string[] 
-}>;
+// Import the shared types
+import { AureliaProjectComponentMap, AureliaComponentInfo } from '../common/types';
 
 // Track component dependencies to manage updates when files change
 interface ComponentDependencies {
@@ -35,6 +31,14 @@ const componentDependencies: ComponentDependencies = {
     lastFullScan: 0,
     scanInProgress: false
 };
+
+const AURELIA_COMPONENT_DECORATORS = ['customElement', 'customAttribute', 'valueConverter', 'bindingBehavior'];
+
+interface ScanResult {
+    elements: AureliaComponentInfo[];
+    attributes: AureliaComponentInfo[];
+    // Add other component types as needed (value converters, binding behaviors)
+}
 
 /**
  * Extract bindable properties from a class declaration
@@ -260,7 +264,7 @@ export function scanWorkspaceForAureliaComponents(
             return;
         }
         log('info', `[scanWorkspace] Scanning project for Aurelia components/attributes...`);
-        const foundComponents = new Map<string, { uri: string, type: 'element' | 'attribute', name: string, bindables?: string[] }>();
+        const foundComponents = new Map<string, AureliaComponentInfo>();
         const program = languageService.getProgram();
         if (!program) {
             log('warn', '[scanWorkspace] Could not get program from language service.');
@@ -296,6 +300,7 @@ export function scanWorkspaceForAureliaComponents(
             ts.forEachChild(sourceFile, node => {
                 if (ts.isClassDeclaration(node) && node.name) {
                     const className = node.name.getText(sourceFile);
+                    if (!className) return;
                     log('debug', `  - Found class: ${className}`);
                     const decorators = ts.getDecorators(node);
                     let isExplicitlyDecorated = false;
@@ -322,12 +327,15 @@ export function scanWorkspaceForAureliaComponents(
                                 const elementName = firstArg ?? toKebabCase(className);
                                 if (elementName && !foundComponents.has(elementName)) {
                                     const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                                    foundComponents.set(elementName, { 
+                                    const componentInfo: AureliaComponentInfo = { 
                                         uri: fileUri, 
                                         type: 'element', 
                                         name: elementName, 
-                                        bindables: bindables 
-                                    });
+                                        bindables: bindables,
+                                        className: className, 
+                                        sourceFile: sourceFile.fileName 
+                                    };
+                                    foundComponents.set(elementName, componentInfo);
                                     
                                     // Register component file
                                     registerComponentFile(fileUri, sourceFile.fileName);
@@ -340,16 +348,21 @@ export function scanWorkspaceForAureliaComponents(
                                 isExplicitlyDecorated = true;
                                 const attributeName = firstArg ?? toKebabCase(className);
                                  if (attributeName && !foundComponents.has(attributeName)) {
-                                    foundComponents.set(attributeName, { 
+                                    const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                                    const componentInfo: AureliaComponentInfo = { 
                                         uri: fileUri, 
                                         type: 'attribute', 
-                                        name: attributeName 
-                                    }); 
+                                        name: attributeName,
+                                        bindables: bindables,
+                                        className: className, 
+                                        sourceFile: sourceFile.fileName 
+                                    };
+                                    foundComponents.set(attributeName, componentInfo);
                                     
                                     // Register component file
                                     registerComponentFile(fileUri, sourceFile.fileName);
                                     
-                                    log('info', `[scanWorkspace] --> Found Attribute: ${attributeName} in ${sourceFile.fileName}`);
+                                    log('info', `[scanWorkspace] --> Found Attribute: ${attributeName} (Bindables: ${bindables.join(', ')}) in ${sourceFile.fileName}`);
                                  }
                                  break;
                             }
@@ -367,12 +380,15 @@ export function scanWorkspaceForAureliaComponents(
                             const implicitElementName = toKebabCase(className);
                             if (implicitElementName && !foundComponents.has(implicitElementName)) {
                                 const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                                foundComponents.set(implicitElementName, { 
+                                const componentInfo: AureliaComponentInfo = { 
                                     uri: fileUri, 
                                     type: 'element', 
                                     name: implicitElementName, 
-                                    bindables: bindables 
-                                });
+                                    bindables: bindables,
+                                    className: className, 
+                                    sourceFile: sourceFile.fileName 
+                                };
+                                foundComponents.set(implicitElementName, componentInfo);
                                 
                                 // Register component file
                                 registerComponentFile(fileUri, sourceFile.fileName);
@@ -467,6 +483,8 @@ export function updateComponentInfoForFile(
     ts.forEachChild(sourceFile, node => {
         if (ts.isClassDeclaration(node) && node.name) {
             const className = node.name.getText(sourceFile);
+            if (!className) return;
+            log('debug', `  - Found class: ${className}`);
             const decorators = ts.getDecorators(node);
 
             if (decorators && decorators.length > 0) {
@@ -501,12 +519,15 @@ export function updateComponentInfoForFile(
                              
                              // Add/update component
                              const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                             aureliaProjectComponents.set(elementName, { 
+                             const componentInfo: AureliaComponentInfo = { 
                                 uri: fileUri, 
                                 type: 'element', 
                                 name: elementName, 
-                                bindables: bindables 
-                             });
+                                bindables: bindables,
+                                className: className, 
+                                sourceFile: filePath 
+                             };
+                             aureliaProjectComponents.set(elementName, componentInfo);
                              
                              // Register component file
                              registerComponentFile(fileUri, filePath);
@@ -530,11 +551,16 @@ export function updateComponentInfoForFile(
                              existingComponents.delete(attributeName);
                              
                              // Add/update component
-                             aureliaProjectComponents.set(attributeName, { 
+                             const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                             const componentInfo: AureliaComponentInfo = { 
                                 uri: fileUri, 
                                 type: 'attribute', 
-                                name: attributeName 
-                             });
+                                name: attributeName,
+                                bindables: bindables,
+                                className: className, 
+                                sourceFile: filePath 
+                             };
+                             aureliaProjectComponents.set(attributeName, componentInfo);
                              
                              // Register component file
                              registerComponentFile(fileUri, filePath);
@@ -570,12 +596,15 @@ export function updateComponentInfoForFile(
                         
                         // Add/update component
                         const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                        aureliaProjectComponents.set(implicitElementName, { 
+                        const componentInfo: AureliaComponentInfo = { 
                             uri: fileUri, 
                             type: 'element', 
                             name: implicitElementName, 
-                            bindables: bindables 
-                        });
+                            bindables: bindables,
+                            className: className, 
+                            sourceFile: filePath 
+                        };
+                        aureliaProjectComponents.set(implicitElementName, componentInfo);
                         
                         // Register component files
                         registerComponentFile(fileUri, filePath);
@@ -621,4 +650,36 @@ export function updateComponentInfoForFile(
     }
 
     return mapChanged;
-} 
+}
+
+// // Scans a TypeScript file content to find Aurelia component declarations.
+// export function scanFileForComponents(filePath: string, fileContent: string): ScanResult {
+//    ...
+// }
+
+// // Helper to find @bindable properties within a class
+// function findBindablesInClass(classNode: ts.ClassDeclaration, sourceFile: ts.SourceFile): string[] {
+//    ...
+// }
+
+// // Converts PascalCase or camelCase className to kebab-case html tag/attribute name
+// function classNameToHtml(className: string): string {
+//     ...
+// }
+
+// // Scans project files based on include/exclude patterns to find Aurelia components.
+// export function scanProjectForComponents(
+//     program: ts.Program,
+//     filePaths: string[] 
+// ): AureliaProjectComponentMap { // Use imported type
+//    ...
+// }
+
+// // Example function signature if updating an existing map
+// export function updateComponentMapFromFile(
+//     filePath: string, 
+//     fileContent: string, 
+//     componentMap: AureliaProjectComponentMap // Use imported type
+// ): void {
+//    ...
+// } 

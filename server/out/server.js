@@ -232,7 +232,8 @@ connection.onDefinition(async (params) => {
     // +++ Call imported handler +++
     return (0, definitionProvider_1.handleDefinitionRequest)(params, documents, // Pass state
     aureliaDocuments, // Pass state
-    languageService // Pass dependency
+    languageService, // Pass dependency
+    aureliaProjectComponents // <<< Add the component map here
     );
 });
 // --- Semantic Tokens ---
@@ -266,8 +267,8 @@ connection.onHover(async (params) => {
     // +++ Call imported handler +++
     return (0, hoverProvider_1.handleHoverRequest)(params, documents, // Pass state
     aureliaDocuments, // Pass state
-    virtualFiles, // Pass state
-    languageService // Pass dependency
+    languageService, // Pass dependency
+    aureliaProjectComponents // <<< Add the component map here
     );
 });
 // --- Signature Help --- 

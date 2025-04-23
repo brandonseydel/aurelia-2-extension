@@ -39,7 +39,8 @@ const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
 import {
-  AureliaDocumentInfo
+  AureliaDocumentInfo,
+  AureliaProjectComponentMap
 } from './common/types';
 import { initializeLogger, log } from './utils/logger';
 import { serverSettings } from './common/settings';
@@ -62,7 +63,7 @@ let virtualFiles: Map<string, { content: string; version: number }> = new Map();
 let aureliaDocuments: Map<string, AureliaDocumentInfo> = new Map(); // htmlUri -> info
 let strictMode = false;
 let workspaceRoot = process.cwd(); // Store workspace root
-let aureliaProjectComponents: Map<string, { uri: string, type: 'element' | 'attribute', name: string, bindables?: string[] }> = new Map();
+let aureliaProjectComponents: AureliaProjectComponentMap = new Map();
 let viewModelMembersCache: Map<string, { content: string | undefined; members: string[] }> = new Map();
 
 let componentUpdateTimer: NodeJS.Timeout | undefined;
@@ -331,7 +332,8 @@ connection.onDefinition(async (params: DefinitionParams): Promise<LocationLink[]
     params,
     documents,          // Pass state
     aureliaDocuments,   // Pass state
-    languageService     // Pass dependency
+    languageService,    // Pass dependency
+    aureliaProjectComponents // <<< Add the component map here
   );
 });
 
@@ -397,8 +399,8 @@ connection.onHover(async (params: HoverParams): Promise<Hover | undefined> => {
     params,
     documents,          // Pass state
     aureliaDocuments,   // Pass state
-    virtualFiles,       // Pass state
-    languageService     // Pass dependency
+    languageService,    // Pass dependency
+    aureliaProjectComponents // <<< Add the component map here
   );
 });
 

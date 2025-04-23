@@ -12,7 +12,8 @@
     "typescript": "^5.0.0",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11",
-    "vscode-uri": "^3.1.0"
+    "vscode-uri": "^3.1.0",
+    "parse5-sax-parser": "^7.0.0"
   },
   "main": "./out/server.js",
   "scripts": {
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^18.x",
-    "@types/parse5": "^7.0.0"
+    "@types/parse5": "^7.0.0",
+    "@types/parse5-sax-parser": "^7.0.0"
   }
 }

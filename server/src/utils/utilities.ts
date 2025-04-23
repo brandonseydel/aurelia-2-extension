@@ -1,6 +1,8 @@
 import * as ts from 'typescript';
 import { AURELIA_BINDING_SUFFIXES, AURELIA_TEMPLATE_CONTROLLERS, AURELIA_SPECIAL_ATTRIBUTES } from '../constants';
 import { log } from './logger';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import { Position, Range as LSPRange } from 'vscode-languageserver/node';
 
 // Helper: Converts kebab-case to PascalCase
 export function kebabToPascalCase(str: string): string {
@@ -83,4 +85,50 @@ export function toKebabCase(str: string): string {
         .replace(/([a-z])([A-Z])/g, '$1-$2') // CamelCase to kebab-case
         .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2') // Handle adjacent caps like HTMLElement
         .toLowerCase();
+}
+
+/**
+ * Helper function to get the range of the word at a given position.
+ * Considers alphanumeric characters and hyphens as part of a word.
+ */
+export function getWordRangeAtPosition(document: TextDocument, position: Position): LSPRange | undefined {
+    const text = document.getText();
+    const offset = document.offsetAt(position);
+
+    // Expand backwards
+    let start = offset;
+    while (start > 0 && /[\w-]/.test(text[start - 1])) {
+        start--;
+    }
+
+    // Expand forwards
+    let end = offset;
+    while (end < text.length && /[\w-]/.test(text[end])) {
+        end++;
+    }
+
+    // If the cursor is not strictly within the word (e.g., right after it), adjust.
+    // But only if start and end didn't move, meaning we are not on a word character.
+    if (start === offset && end === offset) { 
+        // Check if cursor is immediately after a word character
+        if (start > 0 && /[\w-]/.test(text[start - 1])) {
+            start--; // Move start back one step
+            // Find the actual beginning of the word before the cursor
+            while (start > 0 && /[\w-]/.test(text[start - 1])) {
+                 start--;
+            }
+            end = offset; // end remains at the original cursor offset
+        } else {
+            return undefined; // Not on or immediately after a word
+        }
+    } else if (start === offset && end > offset) { 
+         // Cursor is at the beginning of the word, don't adjust start, end is already correct
+     } else if (start < offset && end === offset) {
+         // Cursor is at the end of the word, start is correct, end needs no adjustment
+     } // else: cursor is in the middle, start/end are correct
+
+
+    if (start === end) return undefined; // No word found or range is invalid
+
+    return LSPRange.create(document.positionAt(start), document.positionAt(end));
 } 

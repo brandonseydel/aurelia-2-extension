@@ -12,17 +12,21 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { TextDocuments } from 'vscode-languageserver/node'; // For TextDocuments type
 import { URI } from 'vscode-uri';
 import * as parse5 from 'parse5';
-import { Node, Element } from 'parse5/dist/tree-adapters/default';
+import { DefaultTreeAdapterTypes } from 'parse5';
 import {
     AureliaDocumentInfo,
-    DetailedMapping
+    DetailedMapping,
+    AureliaProjectComponentMap
 } from '../common/types';
 import { log } from '../utils/logger';
 import { getViewModelMemberNames, mapHtmlOffsetToVirtual } from '../core/virtualFileProvider';
 import { AURELIA_BINDING_SUFFIXES, AURELIA_TEMPLATE_CONTROLLERS } from '../constants'; // Import necessary constants
 
 // Type definitions
-type AureliaProjectComponentMap = Map<string, { uri: string, type: 'element' | 'attribute', name: string, bindables?: string[] }>;
+// Remove local type definition
+// type AureliaProjectComponentMap = Map<string, { uri: string, type: 'element' | 'attribute', name: string, bindables?: string[] }>;
+
+// Restore original Map definition for the cache, ensuring 'content' is required
 type ViewModelMembersCache = Map<string, { content: string | undefined; members: string[] }>;
 
 /**
@@ -78,8 +82,8 @@ export function handleCompletionRequest(
             const parsedFragment = parse5.parseFragment(fragment, { sourceCodeLocationInfo: true });
             const nodes = parsedFragment.childNodes;
             const relativeOffset = offset - fragmentStartOffset;
-            let targetNode: Node | undefined;
-            let parentElement: Element | undefined;
+            let targetNode: DefaultTreeAdapterTypes.Node | undefined;
+            let parentElement: DefaultTreeAdapterTypes.Element | undefined;
             let isInsideTagName = false;
             let isCompletingTagName = false;
             let isInsideAttributeName = false;
@@ -87,7 +91,7 @@ export function handleCompletionRequest(
             let isInsideOpeningTagSpace = false;
             let currentTagName: string | undefined = undefined;
 
-            function findContext(node: Node, parent: Element | undefined) {
+            function findContext(node: DefaultTreeAdapterTypes.Node, parent: DefaultTreeAdapterTypes.Element | undefined) {
                 if (!node.sourceCodeLocation) return;
                 const loc = node.sourceCodeLocation;
                 if (loc.startOffset <= relativeOffset && relativeOffset <= loc.endOffset) {
@@ -95,7 +99,7 @@ export function handleCompletionRequest(
                     parentElement = parent;
 
                     if (node.nodeName !== '#text' && node.nodeName !== '#comment' && 'tagName' in node && 'startTag' in loc && loc.startTag) {
-                        const elementNode = node as Element;
+                        const elementNode = node as DefaultTreeAdapterTypes.Element;
                         const startTag = loc.startTag;
                         const tagNameLength = elementNode.tagName.length;
                         const tagNameStart = startTag.startOffset + 1;
@@ -126,8 +130,8 @@ export function handleCompletionRequest(
                             }
                         }
                     }
-                    if ('childNodes' in node && (node as Element).childNodes.length > 0) {
-                        (node as Element).childNodes.forEach(child => findContext(child, node as Element));
+                    if ('childNodes' in node && (node as DefaultTreeAdapterTypes.Element).childNodes.length > 0) {
+                        (node as DefaultTreeAdapterTypes.Element).childNodes.forEach(child => findContext(child, node as DefaultTreeAdapterTypes.Element));
                     }
                 }
             }
@@ -161,30 +165,43 @@ export function handleCompletionRequest(
                         const wordBeforeDot = wordMatch ? wordMatch[1] : '';
                         log('debug', `  - Word before dot: '${wordBeforeDot}'`);
 
-                        if (wordBeforeDot && componentInfo.bindables.includes(wordBeforeDot)) {
-                            log('debug', `  - Word matches bindable: ${wordBeforeDot}. Providing suffix completions.`);
+                        // Check if the word is a known bindable OR a standard attribute like 'class' or 'style'
+                        const isKnownBindable = componentInfo?.bindables?.includes(wordBeforeDot) ?? false;
+                        // Let's be more general: check if it looks like a valid attribute name.
+                        // This avoids needing a hardcoded list and works for data-*, aria-*, etc.
+                        const isValidAttributeName = /^[a-zA-Z][a-zA-Z0-9-]*$/.test(wordBeforeDot);
+
+                        if (wordBeforeDot && (isKnownBindable || isValidAttributeName)) {
+                            const detailContext = isKnownBindable ? `bindable property '${wordBeforeDot}'` : `attribute '${wordBeforeDot}'`;
+                            log('debug', `  - Word matches ${isKnownBindable ? 'bindable' : 'valid attribute name'}: ${wordBeforeDot}. Providing suffix completions.`);
                             AURELIA_BINDING_SUFFIXES.forEach(suffix => {
-                                if (suffix !== '.ref') {
+                                // Provide suffix completion like 'bind', 'one-way' etc.
+                                if (suffix !== '.ref') { // Typically .ref isn't used this way
                                     htmlCompletions.push({
-                                        label: `${wordBeforeDot}${suffix}`,
-                                        kind: CompletionItemKind.Event,
-                                        insertText: suffix.substring(1),
+                                        label: suffix.substring(1), // Suggest 'bind', 'one-way' etc.
+                                        kind: CompletionItemKind.Event, // Using Event kind like before
+                                        insertText: suffix.substring(1), // Insert just the command part
                                         insertTextFormat: InsertTextFormat.PlainText,
-                                        detail: `Bind ${suffix} on property ${wordBeforeDot}`,
-                                        sortText: `0_bindable_${wordBeforeDot}${suffix}`
+                                        detail: `Aurelia command ${suffix} on ${detailContext}`,
+                                        // Filter text includes the original attribute for better matching if user typed 'class.bi'
+                                        filterText: `${wordBeforeDot}${suffix}`,
+                                        // Prioritize bindable suggestions slightly? Or keep unified?
+                                        sortText: `0_${isKnownBindable ? 'bindable' : 'attribute'}_${wordBeforeDot}${suffix}`
                                     });
                                 }
                             });
+                            // Return *only* these suffix completions when triggered by a dot after a valid attribute/bindable
                             const distinctMap = new Map<string, CompletionItem>();
                             htmlCompletions.forEach(item => { if (!distinctMap.has(item.label)) { distinctMap.set(item.label, item); } });
                             const distinctCompletions = Array.from(distinctMap.values());
-                            log('debug', `[onCompletion] HTML Context (Dot Trigger): Returning ${distinctCompletions.length} distinct completions.`);
+                            log('debug', `[onCompletion] HTML Context (Dot Trigger for ${detailContext}): Returning ${distinctCompletions.length} distinct command completions.`);
                             return distinctCompletions;
                         }
                     }
                 }
-                log('debug', `[onCompletion] Dot trigger logic finished. Returning ${htmlCompletions.length} items.`);
-                return htmlCompletions.length > 0 ? htmlCompletions : undefined;
+                log('debug', `[onCompletion] Dot trigger logic finished without providing attribute suffix completions. No further HTML completions from this branch.`);
+                // Return undefined or an empty array to signify no completions from this specific dot-trigger path
+                return undefined;
             }
             else if (!provideAttributeCompletions && !provideElementCompletions && (charBeforeCursor === ' ' || triggerChar === undefined)) {
                 const textBeforeOffset = document.getText(LSPRange.create(Position.create(0, 0), params.position));
@@ -293,6 +310,8 @@ export function handleCompletionRequest(
 
     // --- Branch 2: Completion INSIDE an Aurelia expression --- 
     if (docInfo && activeMapping) {
+        const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
+
         let virtualCompletionOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
         if (offset === activeMapping.htmlExpressionLocation.endOffset + 1 && params.context?.triggerCharacter === '.') {
             virtualCompletionOffset = activeMapping.virtualValueRange.end;
@@ -333,7 +352,6 @@ export function handleCompletionRequest(
                 }
                 return true;
             }).map((entry, index) => {
-                const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
                 const isViewModelMember = memberNames.includes(entry.name);
                 let sortPriority = '9';
                 if (isViewModelMember) sortPriority = '0';
@@ -357,7 +375,6 @@ export function handleCompletionRequest(
             const seemsLacking = expressionCompletions.length === 0 || !expressionCompletions.some(c => c.label.startsWith(trimmedText));
             if (seemsLacking) {
                 log('debug', `[onCompletion] Triggering fallback completion for partial identifier: '${trimmedText}'`);
-                const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
                 const partialMatchMembers = memberNames.filter(memberName =>
                     memberName.startsWith(trimmedText) &&
                     !expressionCompletions.some(existing => existing.label === memberName)
@@ -378,8 +395,6 @@ export function handleCompletionRequest(
         const charBeforeCursor = textBeforeCursor[textBeforeCursor.length - 1]?.trim();
 
         if (!charBeforeCursor) {
-            // Always suggest VM Members as fallback
-            const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
             let addedFallbackMembers = false;
             memberNames.forEach(memberName => {
                 if (!expressionCompletions.some(existing => existing.label === memberName)) {

@@ -1,6 +1,6 @@
 import * as parse5 from 'parse5';
-import { Document, Node, TextNode, Element } from 'parse5/dist/tree-adapters/default';
-import { AureliaHtmlExpression } from '../common/types'; 
+import { DefaultTreeAdapterTypes } from 'parse5';
+import { AureliaHtmlExpression } from '../common/types';
 import { log } from '../utils/logger';
 import { isAureliaAttribute, calculateLocationFromOffset } from '../utils/utilities';
 
@@ -10,10 +10,10 @@ import { isAureliaAttribute, calculateLocationFromOffset } from '../utils/utilit
  */
 export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpression[] {
     const expressions: AureliaHtmlExpression[] = [];
-    const document = parse5.parse(htmlContent, { sourceCodeLocationInfo: true }) as Document;
+    const document = parse5.parse(htmlContent, { sourceCodeLocationInfo: true }) as DefaultTreeAdapterTypes.Document;
     const interpolationRegex = /\${([^}]*)}/g; // Match ${...}, allow empty {}
 
-    const traverse = (node: Node) => {
+    const traverse = (node: DefaultTreeAdapterTypes.Node) => {
         log('debug', `[extractExpressions] Traversing node: ${node.nodeName}`);
         const hasLocation = !!node.sourceCodeLocation;
 
@@ -26,7 +26,7 @@ export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpr
         if (hasLocation) {
             // 1. Text Nodes for Interpolation: ${...}
             if (node.nodeName === '#text' && node.sourceCodeLocation) {
-                const textNode = node as TextNode;
+                const textNode = node as DefaultTreeAdapterTypes.TextNode;
                 const textContent = textNode.value;
                 log('debug', `[extractExpressions]   - Found #text node with content: "${textContent.substring(0, 50)}${textContent.length > 50 ? '...' : ''}"`);
                 let match;
@@ -58,7 +58,7 @@ export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpr
 
             // 2. Element Attributes for Bindings: *.bind="..." etc.
             if ('attrs' in node && node.attrs && node.sourceCodeLocation) {
-                const element = node as Element;
+                const element = node as DefaultTreeAdapterTypes.Element;
                 log('debug', `[extractExpressions]   - Checking attributes for <${element.tagName}>`);
                 for (const attr of element.attrs) {
                     if (isAureliaAttribute(attr.name) && element.sourceCodeLocation?.attrs?.[attr.name]) {
@@ -100,14 +100,14 @@ export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpr
 
         // 3. Traverse Children (Always attempt)
         if (typeof (node as any).childNodes === 'object' && (node as any).childNodes !== null) {
-            const childNodes = (node as any).childNodes as Node[];
+            const childNodes = (node as any).childNodes as DefaultTreeAdapterTypes.Node[];
             if (childNodes.length > 0) {
                 log('debug', `[extractExpressions]   - Traversing ${childNodes.length} children of ${node.nodeName}`);
                 childNodes.forEach(traverse);
             }
         }
         else if ('content' in node && node.content && typeof node.content.childNodes === 'object' && node.content.childNodes !== null) {
-            const childNodes = node.content.childNodes as Node[];
+            const childNodes = node.content.childNodes as DefaultTreeAdapterTypes.Node[];
             if (childNodes.length > 0) {
                 log('debug', `[extractExpressions]   - Traversing ${childNodes.length} children of ${node.nodeName} <template> content`);
                 childNodes.forEach(traverse);
