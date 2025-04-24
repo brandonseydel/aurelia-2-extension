@@ -72,6 +72,10 @@ function activate(context) {
         synchronize: {
         // Notify the server about file changes to '.clientrc files contained in the workspace
         // fileEvents: workspace.createFileSystemWatcher('**/.clientrc') // Example configuration watching
+        },
+        initializationOptions: {
+        // Pass any initial settings if needed, but primarily to enable semantic tokens
+        // The actual legend will come from the server capabilities 
         }
     };
     // Create the language client and start the client.

@@ -1,6 +1,6 @@
 import * as parse5 from 'parse5';
 import { DefaultTreeAdapterTypes } from 'parse5';
-import { AureliaHtmlExpression } from '../common/types';
+import { AureliaHtmlExpression, Location, HtmlParsingResult } from '../common/types';
 import { log } from '../utils/logger';
 import { isAureliaAttribute, calculateLocationFromOffset } from '../utils/utilities';
 
@@ -8,8 +8,9 @@ import { isAureliaAttribute, calculateLocationFromOffset } from '../utils/utilit
  * Extracts Aurelia-specific expressions (interpolations and bindings) from HTML content.
  * Uses parse5 to traverse the HTML AST.
  */
-export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpression[] {
+export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResult {
     const expressions: AureliaHtmlExpression[] = [];
+    const elementTags: HtmlParsingResult['elementTags'] = [];
     const document = parse5.parse(htmlContent, { sourceCodeLocationInfo: true }) as DefaultTreeAdapterTypes.Document;
     const interpolationRegex = /\${([^}]*)}/g; // Match ${...}, allow empty {}
 
@@ -88,6 +89,40 @@ export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpr
                         }
                     } // end if isAureliaAttribute
                 } // end for attr
+
+                if (element.sourceCodeLocation?.startTag) {
+                    const startTagLoc = element.sourceCodeLocation.startTag;
+                    const endTagLoc = element.sourceCodeLocation.endTag;
+
+                    const startTagLocation: Location = {
+                        startLine: startTagLoc.startLine,
+                        startCol: startTagLoc.startCol,
+                        endLine: startTagLoc.endLine,
+                        endCol: startTagLoc.endCol,
+                        startOffset: startTagLoc.startOffset,
+                        endOffset: startTagLoc.endOffset
+                    };
+                    
+                    let endTagLocation: Location | undefined = undefined;
+                    if (endTagLoc) {
+                        endTagLocation = {
+                            startLine: endTagLoc.startLine,
+                            startCol: endTagLoc.startCol,
+                            endLine: endTagLoc.endLine,
+                            endCol: endTagLoc.endCol,
+                            startOffset: endTagLoc.startOffset,
+                            endOffset: endTagLoc.endOffset
+                        };
+                    }
+
+                    log('debug', `[extractExpressions]   - Found element tag: <${element.tagName}> at offset ${startTagLocation.startOffset}`);
+                    elementTags.push({ 
+                        name: element.tagName, 
+                        startTagRange: startTagLocation, 
+                        endTagRange: endTagLocation
+                    });
+                }
+
             } // end if attrs
 
             // 4. Handle <template> content (Only if parent template has location)
@@ -123,6 +158,7 @@ export function extractExpressionsFromHtml(htmlContent: string): AureliaHtmlExpr
     }
 
     expressions.sort((a, b) => a.htmlLocation.startOffset - b.htmlLocation.startOffset);
-    log('debug', `[extractExpressions] Found ${expressions.length} expressions.`);
-    return expressions;
+    elementTags.sort((a, b) => a.startTagRange.startOffset - b.startTagRange.startOffset);
+    log('debug', `[extractExpressions] Found ${expressions.length} expressions and ${elementTags.length} element tags.`);
+    return { expressions, elementTags };
 } 

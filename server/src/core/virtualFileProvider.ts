@@ -161,7 +161,8 @@ export function updateVirtualFile(
         relativeImportPath = "./" + relativeImportPath;
     }
 
-    const expressions = extractExpressionsFromHtml(htmlContent);
+    const { expressions, elementTags } = extractExpressionsFromHtml(htmlContent);
+
     // +++ Pass cache to getViewModelMemberNames +++
     const memberNames = getViewModelMemberNames(vmClassName, vmFsPath, languageService, viewModelMembersCache);
 
@@ -265,7 +266,13 @@ export function updateVirtualFile(
     log('debug', `[updateVirtualFile] VIRTUAL content for ${virtualFileUriString} (v${version}):\n---\n${virtualContent}\n---`);
     virtualFiles.set(virtualFileUriString, { content: virtualContent, version });
     const htmlUriString = URI.parse(htmlUri).toString();
-    aureliaDocuments.set(htmlUriString, { virtualUri: virtualFileUriString, mappings: detailedMappings, vmClassName, vmFsPath });
+    aureliaDocuments.set(htmlUriString, {
+        virtualUri: virtualFileUriString,
+        mappings: detailedMappings,
+        vmClassName,
+        vmFsPath,
+        elementTagLocations: elementTags
+    });
 
     // Trigger diagnostics update via imported function
     setImmediate(() => updateDiagnostics(

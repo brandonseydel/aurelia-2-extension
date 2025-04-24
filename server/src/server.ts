@@ -345,7 +345,8 @@ connection.languages.semanticTokens.on(async (params: SemanticTokensParams): Pro
     documents,
     aureliaDocuments,
     virtualFiles, // Pass state
-    languageService
+    languageService,
+    aureliaProjectComponents // <<< Pass the component map here
   );
 });
 

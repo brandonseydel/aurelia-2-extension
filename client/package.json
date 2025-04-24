@@ -1,48 +1,86 @@
 {
-  "name": "client",
-  "version": "1.0.0",
-  "description": "",
-  "main": "./out/extension.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -b",
-    "watch": "tsc -b -w",
-    "lint": "eslint ./src --ext .ts,.tsx",
-    "postinstall": "cd ../server && npm install && cd ../client"
-  },
-  "keywords": [],
+  "name": "aurelia-2-extension-client",
+  "description": "VSCode client for the Aurelia 2 Language Server",
   "author": "",
-  "license": "ISC",
-  "engines": {
-    "vscode": "^1.80.0"
+  "license": "MIT",
+  "version": "0.0.1",
+  "publisher": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aurelia/vscode-extension.git"
   },
-  "devDependencies": {
-    "@types/vscode": "^1.99.1",
-    "vscode-languageclient": "^9.0.1"
+  "engines": {
+    "vscode": "^1.66.0"
   },
   "activationEvents": [
     "onLanguage:html"
   ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "lint": "eslint ./src --ext .ts,.tsx",
+    "postinstall": "cd ../server && npm install && cd ../client",
+    "test": "node ./out/test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.10",
+    "@types/vscode": "^1.66.0",
+    "@typescript-eslint/eslint-plugin": "^6.20.0",
+    "@typescript-eslint/parser": "^6.20.0",
+    "@vscode/test-cli": "^0.0.6",
+    "@vscode/test-electron": "^2.3.9",
+    "eslint": "^8.56.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.3"
+  },
+  "editor.semanticHighlighting.enabled": true,
   "contributes": {
-    "languages": [
+    "semanticTokenTypes": [
       {
-        "id": "html",
-        "aliases": ["Aurelia HTML", "html"],
-        "extensions": [".html"]
+        "id": "aureliaElement",
+        "description": "Aurelia custom element tag names",
+        "superType": "class"
+      },
+      {
+        "id": "aureliaAttribute",
+        "description": "Aurelia custom attribute names",
+        "superType": "property"
+      },
+      {
+        "id": "aureliaBinding",
+        "description": "Aurelia binding expression content",
+        "superType": "variable"
       }
     ],
-    "grammars": [
+    "semanticTokenScopes": [
       {
         "language": "html",
-        "scopeName": "text.html.aurelia",
-        "path": "./syntaxes/aurelia-html.tmLanguage.json",
-        "injectTo": ["text.html"]
+        "scopes": {
+          "aureliaElement": [
+            "entity.name.tag.aurelia.html"
+          ],
+          "aureliaAttribute": [
+            "entity.other.attribute-name.aurelia.html"
+          ],
+          "aureliaBinding": [
+            "meta.binding.aurelia.html"
+          ]
+        }
       }
     ],
-    "configuration": {
-      "title": "Aurelia",
-      "properties": {
+    "configurationDefaults": {
+      "editor.semanticTokenColorCustomizations": {
+        "rules": {
+          "aureliaElement": "#4EC9B0",
+          "aureliaAttribute": "#4EC9B0",
+          "aureliaBinding": "#4EC9B0"
+        }
       }
     }
   }

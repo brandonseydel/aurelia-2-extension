@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { workspace, ExtensionContext } from 'vscode';
+import { workspace, ExtensionContext, SemanticTokensLegend } from 'vscode';
 
 import {
     LanguageClient,
@@ -47,6 +47,10 @@ export function activate(context: ExtensionContext) {
         synchronize: {
             // Notify the server about file changes to '.clientrc files contained in the workspace
             // fileEvents: workspace.createFileSystemWatcher('**/.clientrc') // Example configuration watching
+        },
+        initializationOptions: { 
+             // Pass any initial settings if needed, but primarily to enable semantic tokens
+             // The actual legend will come from the server capabilities 
         }
     };
 

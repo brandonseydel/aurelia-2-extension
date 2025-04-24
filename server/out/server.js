@@ -240,7 +240,8 @@ connection.onDefinition(async (params) => {
 connection.languages.semanticTokens.on(async (params) => {
     // +++ Call imported handler +++
     return (0, semanticTokensProvider_1.handleSemanticTokensRequest)(params, documents, aureliaDocuments, virtualFiles, // Pass state
-    languageService);
+    languageService, aureliaProjectComponents // <<< Pass the component map here
+    );
 });
 // --- Document Formatting (Placeholder) ---
 connection.onDocumentFormatting(async (params) => {

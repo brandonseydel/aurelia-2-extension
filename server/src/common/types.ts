@@ -6,6 +6,17 @@ import { Range as LSPRange } from 'vscode-languageserver/node';
 export type Location = any; // Bypass linter
 export type Attribute = any; // Bypass linter
 
+// +++ Added Type for Parser Result +++
+export interface HtmlParsingResult {
+    expressions: AureliaHtmlExpression[];
+    elementTags: Array<{ 
+        name: string; 
+        startTagRange: Location; 
+        endTagRange?: Location; // <<< Add optional endTagRange
+    }>;
+}
+// ++++++++++++++++++++++++++++++++++
+
 // --- Interfaces ---
 export interface AureliaHtmlExpression {
     expression: string; // The raw expression string
@@ -32,6 +43,7 @@ export interface AureliaDocumentInfo {
     mappings: DetailedMapping[];
     vmClassName: string; // ViewModel class name
     vmFsPath: string; // ViewModel file system path
+    elementTagLocations?: Array<{ name: string; startTagRange: Location; endTagRange?: Location }>;
 }
 
 // --- Added Type Definitions --- 
