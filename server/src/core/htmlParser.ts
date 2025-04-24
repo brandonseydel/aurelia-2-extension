@@ -34,10 +34,25 @@ export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResu
                 interpolationRegex.lastIndex = 0;
                 while ((match = interpolationRegex.exec(textContent)) !== null) {
                     log('debug', `[extractExpressions]     - REGEX MATCH FOUND: ${match[0]}`);
+                    log('debug', `[extractExpressions]       - Node Content: "${textContent.replace(/\n/g, '\\n')}"`);
+                    log('debug', `[extractExpressions]       - Node Location: ${JSON.stringify(textNode.sourceCodeLocation)}`);
+                    log('debug', `[extractExpressions]       - Match Index: ${match.index}`);
+                    log('debug', `[extractExpressions]       - Found interpolation match: '${match[1]}' at index ${match.index} within text node.`);
                     const expression = match[1];
-                    const expressionStartOffset = textNode.sourceCodeLocation!.startOffset + match.index + 2;
+
+                    // +++ Count preceding newlines using regex +++
+                    const textBeforeMatch = textContent.substring(0, match.index);
+                    const newlineRegex = /\r\n|\r|\n/g; // Re-use the regex
+                    const newlineMatches = textBeforeMatch.match(newlineRegex); // Use match (returns array or null)
+                    const newlineCount = newlineMatches ? newlineMatches.length : 0; // Count matches
+                    log('debug', `[extractExpressions]       - Preceding newlines within node before index ${match.index}: ${newlineCount} (Regex)`);
+                    // +++ End Count +++
+
+                    // Adjust calculation: nodeStart + indexInNode + newlineAdjustment + ${ offset
+                    const expressionStartOffset = textNode.sourceCodeLocation!.startOffset + match.index + newlineCount + 2;
+                    log('debug', `[extractExpressions]       - Calculated expr Start Offset (with internal newline adjustment): ${expressionStartOffset}`);
                     const expressionEndOffset = expressionStartOffset + expression.length;
-                    const startLoc = calculateLocationFromOffset(htmlContent, expressionStartOffset);
+                    const startLoc = calculateLocationFromOffset(htmlContent, expressionStartOffset); // Use the potentially adjusted offset
                     const endLoc = calculateLocationFromOffset(htmlContent, expressionEndOffset);
                     if (startLoc && endLoc) {
                         log('debug', `[extractExpressions] Creating INTERPOLATION mapping: expr='${expression}', startOffset=${expressionStartOffset}, endOffset=${expressionEndOffset}`);
@@ -54,7 +69,7 @@ export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResu
                             },
                         });
                     }
-                } // end while
+                }
             } // end if #text
 
             // 2. Element Attributes for Bindings: *.bind="..." etc.

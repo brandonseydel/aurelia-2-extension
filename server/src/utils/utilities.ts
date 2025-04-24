@@ -31,14 +31,14 @@ export function calculateLocationFromOffset(content: string, targetOffset: numbe
     let line = 1;
     let col = 1;
     for (let i = 0; i < targetOffset && i < content.length; i++) {
-        if (content[i] === '\n') {
+        if (content[i] === '\n') { // Original simple check
             line++;
             col = 1;
         } else {
             col++;
         }
     }
-    if (targetOffset > content.length) return null; // Offset out of bounds
+    if (targetOffset > content.length) return null; 
     return { line, col };
 }
 

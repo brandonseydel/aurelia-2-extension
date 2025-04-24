@@ -21,6 +21,7 @@ import {
 import { log } from '../utils/logger';
 import { getViewModelMemberNames, mapHtmlOffsetToVirtual } from '../core/virtualFileProvider';
 import { AURELIA_BINDING_SUFFIXES, AURELIA_TEMPLATE_CONTROLLERS } from '../constants'; // Import necessary constants
+import { extractExpressionsFromHtml } from '../core/htmlParser'; // <<< REMOVE TYPE IMPORT
 
 // Type definitions
 // Remove local type definition
@@ -39,7 +40,8 @@ export function handleCompletionRequest(
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
     aureliaProjectComponents: AureliaProjectComponentMap,
     languageService: ts.LanguageService,
-    viewModelMembersCache: ViewModelMembersCache
+    viewModelMembersCache: ViewModelMembersCache,
+    virtualFiles: Map<string, { content: string; version: number }>
 ): CompletionItem[] | undefined {
     const htmlUriString = params.textDocument.uri;
     const document = documents.get(htmlUriString);
@@ -49,16 +51,49 @@ export function handleCompletionRequest(
     const docInfo = aureliaDocuments.get(htmlUriString);
     let activeMapping: DetailedMapping | undefined;
 
+    // Use docInfo to get VM path etc., but use fresh parse for offset check
     if (docInfo) {
-        log('debug', `[onCompletion] Checking offset ${offset} against ${docInfo.mappings.length} mappings.`);
-        for (const mapping of docInfo.mappings) {
-            const mapStart = mapping.htmlExpressionLocation.startOffset;
-            const mapEnd = mapping.htmlExpressionLocation.endOffset;
-            // Use <= for end offset to allow completion right after expression
-            if (mapStart <= offset && offset <= mapEnd) {
-                log('debug', `    - Offset ${offset} IS within [${mapStart}-${mapEnd}]. Setting active mapping.`);
-                activeMapping = mapping;
-                break;
+        const currentText = document.getText();
+        const { expressions: freshExpressions } = extractExpressionsFromHtml(currentText);
+
+        // Use ORIGINAL OFFSET for the check loop
+        log('debug', `[onCompletion] Checking offset ${offset} against ${freshExpressions.length} freshly parsed expressions.`); 
+
+        for (const expr of freshExpressions) { 
+            const mapStart = expr.htmlLocation.startOffset;
+            const mapEnd = expr.htmlLocation.endOffset;
+
+            // Adjust check range
+            let checkStart = mapStart;
+            let checkEnd = mapEnd;
+            if (expr.type === 'interpolation') {
+                checkStart = mapStart - 2; 
+                checkEnd = mapEnd + 2;     
+            }
+            
+            // Use original offset here
+            const isWithinRange = checkStart <= offset && (expr.type === 'interpolation' ? offset < checkEnd : offset <= checkEnd);
+
+            // Log the check details (using original offset)
+            log('debug', `[onCompletion] Checking Expression Range:`);
+            log('debug', `  - Cursor Offset: ${offset}`);
+            log('debug', `  - Expression Type: ${expr.type}`);
+            log('debug', `  - Raw HTML Range [mapStart-mapEnd]: [${mapStart}-${mapEnd}]`);
+            log('debug', `  - Check Range [checkStart-checkEnd]: [${checkStart}-${checkEnd}] (${expr.type === 'interpolation' ? 'Exclusive End' : 'Inclusive End'})`);
+            log('debug', `  - Check Result (isWithinRange): ${isWithinRange}`);
+
+            if (isWithinRange) {
+                activeMapping = docInfo.mappings.find(m => 
+                    m.htmlExpressionLocation.startOffset === expr.htmlLocation.startOffset &&
+                    m.htmlExpressionLocation.endOffset === expr.htmlLocation.endOffset &&
+                    m.type === expr.type
+                );
+                if (activeMapping) {
+                     log('debug', `    - Offset ${offset} IS within range of fresh expression [${mapStart}-${mapEnd}]. Found matching original mapping.`);
+                     break; 
+                } else {
+                    log('warn', `    - Offset ${offset} IS within range of fresh expression [${mapStart}-${mapEnd}], BUT could not find matching original mapping! Proceeding without expression context.`);
+                }
             }
         }
     }
@@ -325,6 +360,21 @@ export function handleCompletionRequest(
         const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
 
         let virtualCompletionOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
+        
+        log('debug', `[onCompletion] Expression context. Mapped HTML Offset ${offset} to Virtual Offset ${virtualCompletionOffset} (initial)`);
+
+        // <<< Force offset for EMPTY interpolations >>>
+        if (activeMapping.type === 'interpolation' &&
+            activeMapping.htmlExpressionLocation.startOffset === activeMapping.htmlExpressionLocation.endOffset &&
+            virtualCompletionOffset < activeMapping.virtualValueRange.end) { // Ensure not already at/past end
+
+            const forcedOffset = activeMapping.virtualValueRange.start + 1;
+            log('debug', `[onCompletion] Empty interpolation detected. Forcing virtual offset from ${virtualCompletionOffset} to ${forcedOffset}`);
+            virtualCompletionOffset = forcedOffset;
+        }
+        // <<< End Force Offset >>>
+        
+        // Original dot trigger logic (might need refinement later if the above works)
         if (offset === activeMapping.htmlExpressionLocation.endOffset + 1 && params.context?.triggerCharacter === '.') {
             virtualCompletionOffset = activeMapping.virtualValueRange.end;
         }
@@ -333,6 +383,27 @@ export function handleCompletionRequest(
         const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
         let completions: ts.WithMetadata<ts.CompletionInfo> | undefined;
         try {
+            // +++ Log context before calling TS (Safer checks) +++
+            log('debug', `[onCompletion] Attempting TS completions for virtual URI: ${docInfo.virtualUri}`);
+            if (docInfo.virtualUri && virtualFiles.has(docInfo.virtualUri)) {
+                 const virtualDocEntry = virtualFiles.get(docInfo.virtualUri);
+                 if (virtualDocEntry) {
+                    const virtualDocContent = virtualDocEntry.content;
+                    const snippetStart = Math.max(0, virtualCompletionOffset - 10);
+                    const snippetEnd = Math.min(virtualDocContent.length, virtualCompletionOffset + 10);
+                    const virtualSnippet = virtualDocContent.substring(snippetStart, snippetEnd).replace(/\n/g, '\\n');
+                    const cursorMarker = '|';
+                    const markedSnippet = virtualSnippet.substring(0, virtualCompletionOffset - snippetStart) + cursorMarker + virtualSnippet.substring(virtualCompletionOffset - snippetStart);
+                    log('debug', `[onCompletion] Calling TS completions at: ${virtualFsPath}:${virtualCompletionOffset}`);
+                    log('debug', `[onCompletion] Virtual context around offset: "...${markedSnippet}..."`);
+                 } else {
+                     log('warn', `[onCompletion] virtualFiles map has URI ${docInfo.virtualUri} but entry is missing?`);
+                 }
+            } else {
+                 log('warn', `[onCompletion] Cannot get virtual context: virtualUri is missing or not in virtualFiles map. virtualUri: ${docInfo.virtualUri}, Has Key: ${virtualFiles.has(docInfo.virtualUri ?? '')}`);
+            }
+            // +++ End log context +++
+
             completions = languageService.getCompletionsAtPosition(
                 virtualFsPath,
                 virtualCompletionOffset,

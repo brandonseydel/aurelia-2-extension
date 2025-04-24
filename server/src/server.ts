@@ -321,7 +321,8 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] | undefined
     aureliaDocuments,
     aureliaProjectComponents,
     languageService,
-    viewModelMembersCache
+    viewModelMembersCache,
+    virtualFiles
   );
 });
 

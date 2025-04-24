@@ -297,12 +297,46 @@ export function mapHtmlOffsetToVirtual(offset: number, mapping: DetailedMapping)
     const relativeHtmlOffset = offset - baseHtmlOffset;
     let accumulatedOffsetDelta = 0;
 
+    // +++ Add Detailed Logging +++
+    log('debug', `[mapHtmlOffsetToVirtual] INPUT: offset=${offset}, type=${mapping.type}`);
+    log('debug', `  - HTML Range: [${mapping.htmlExpressionLocation.startOffset}-${mapping.htmlExpressionLocation.endOffset}]`);
+    log('debug', `  - Virtual Value Range: [${mapping.virtualValueRange.start}-${mapping.virtualValueRange.end}]`);
+    log('debug', `  - Calculated: baseHtmlOffset=${baseHtmlOffset}, relativeHtmlOffset=${relativeHtmlOffset}`);
+    log('debug', `  - Transformations (${mapping.transformations.length}):`);
+    // +++ End Logging +++
+
     for (const transform of mapping.transformations) {
-        if ((transform.htmlRange.start - baseHtmlOffset) < relativeHtmlOffset) {
+        // +++ Add Inner Loop Logging +++
+        const checkOffset = transform.htmlRange.start - baseHtmlOffset;
+        const condition = checkOffset <= relativeHtmlOffset;
+        log('debug', `    - Transform HTML [${transform.htmlRange.start}-${transform.htmlRange.end}], CheckOffset=${checkOffset}, Delta=${transform.offsetDelta}. Condition (${checkOffset} <= ${relativeHtmlOffset}) is ${condition}`);
+        // +++ End Inner Loop Logging +++
+
+        if (condition) { // Use <=
             accumulatedOffsetDelta += transform.offsetDelta;
+            log('debug', `      -> Accumulated Delta = ${accumulatedOffsetDelta}`); // Log change
         }
     }
 
-    const virtualOffset = mapping.virtualValueRange.start + relativeHtmlOffset + accumulatedOffsetDelta;
-    return Math.max(mapping.virtualValueRange.start, Math.min(virtualOffset, mapping.virtualValueRange.end));
+    let calculatedVirtualOffset = mapping.virtualValueRange.start + relativeHtmlOffset + accumulatedOffsetDelta;
+
+    // +++ Nudge offset if HTML offset is exactly at the start of an INTERPOLATION +++
+    // This handles the <tag>${|} case, pushing it from virtualStart to virtualStart + 1
+    // to match the behavior of the newline case which triggers at htmlStart + 1.
+    if (mapping.type === 'interpolation' && offset === mapping.htmlExpressionLocation.startOffset) {
+         if (calculatedVirtualOffset < mapping.virtualValueRange.end) {
+             calculatedVirtualOffset += 1;
+             log('debug', `[mapHtmlOffsetToVirtual] Nudging virtual offset for exact interpolation start from ${calculatedVirtualOffset-1} to ${calculatedVirtualOffset}`);
+         }
+    }
+    // +++ End Nudge +++
+
+    const clampedVirtualOffset = Math.max(mapping.virtualValueRange.start, Math.min(calculatedVirtualOffset, mapping.virtualValueRange.end));
+
+    // +++ Add Final Logging +++
+    log('debug', `  - Final Calculation: virtualStart(${mapping.virtualValueRange.start}) + relativeHtmlOffset(${relativeHtmlOffset}) + accumulatedOffsetDelta(${accumulatedOffsetDelta}) = ${calculatedVirtualOffset}`);
+    log('debug', `  - Clamped Result: ${clampedVirtualOffset}`);
+    // +++ End Logging +++
+
+    return clampedVirtualOffset;
 } 

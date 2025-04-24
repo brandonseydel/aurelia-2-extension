@@ -1,0 +1,28 @@
+{
+  "scopeName": "html.injection",
+  "injectionSelector": "L:source.ts",
+  "patterns": [
+    {
+      "include": "#template-literal-html-injection"
+    }
+  ],
+  "repository": {
+    "template-literal-html-injection": {
+      "comment": "Inject HTML into TS template literals specifically for Aurelia templates",
+      "begin": "(?<=(?:template)\\s*:\\s*)(`)",
+      "end": "(`)",
+      "beginCaptures": {
+          "1": { "name": "punctuation.definition.string.template.begin.ts" }
+      },
+      "endCaptures": {
+          "1": { "name": "punctuation.definition.string.template.end.ts" }
+      },
+      "contentName": "meta.embedded.block.html", 
+      "patterns": [
+        {
+          "include": "text.html.basic"
+        }
+      ]
+    }
+  }
+} 

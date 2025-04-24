@@ -225,7 +225,7 @@ connection.onDidChangeWatchedFiles((params) => {
 // --- Completion --- 
 connection.onCompletion((params) => {
     // +++ Call imported handler +++
-    return (0, completionProvider_1.handleCompletionRequest)(params, documents, aureliaDocuments, aureliaProjectComponents, languageService, viewModelMembersCache);
+    return (0, completionProvider_1.handleCompletionRequest)(params, documents, aureliaDocuments, aureliaProjectComponents, languageService, viewModelMembersCache, virtualFiles);
 });
 // --- Definition ---
 connection.onDefinition(async (params) => {

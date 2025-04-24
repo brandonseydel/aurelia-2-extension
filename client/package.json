@@ -41,6 +41,18 @@
   },
   "editor.semanticHighlighting.enabled": true,
   "contributes": {
+    "grammars": [
+      {
+        "scopeName": "html.injection",
+        "path": "./syntaxes/html.injection.json",
+        "injectTo": [
+          "source.ts"
+        ],
+        "embeddedLanguages": {
+           "meta.embedded.block.html": "html"
+        }
+      }
+    ],
     "semanticTokenTypes": [
       {
         "id": "aureliaElement",
