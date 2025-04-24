@@ -51,6 +51,14 @@
         "embeddedLanguages": {
            "meta.embedded.block.html": "html"
         }
+      },
+      {
+        "language": "html",
+        "scopeName": "text.html.aurelia",
+        "path": "./syntaxes/aurelia-html.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.expression.aurelia.ts": "typescript" 
+        }
       }
     ],
     "semanticTokenTypes": [
@@ -94,6 +102,12 @@
           "aureliaBinding": "#4EC9B0"
         }
       }
-    }
+    },
+    "languages": [
+      {
+        "id": "html",
+        "configuration": "./language-configuration.json"
+      }
+    ]
   }
 }

@@ -2,24 +2,84 @@
     "scopeName": "text.html.aurelia",
     "patterns": [
         {
-            "include": "text.html.basic"
+            "name": "meta.tag.any.html",
+            "begin": "(<)([a-zA-Z0-9:-]+)",
+            "beginCaptures": { 
+                "1": { "name": "punctuation.definition.tag.begin.html" },
+                "2": { "name": "entity.name.tag.html" }
+            },
+            "end": "(>)|((/>))",
+            "endCaptures": { 
+                "1": { "name": "punctuation.definition.tag.end.html" }, 
+                "2": { "name": "punctuation.definition.tag.end.html" } 
+            },
+            "patterns": [
+                {
+                    "name": "meta.attribute.ref.aurelia.html",
+                    "begin": "\\b(ref|element\\.ref)\\b\\s*(=)",
+                    "beginCaptures": {
+                        "1": { "name": "entity.other.attribute-name.ref.aurelia.html" },
+                        "2": { "name": "punctuation.separator.key-value.html" }
+                    },
+                    "end": "(?=[\\s>/])",
+                    "patterns": [
+                        {
+                            "begin": "\"",
+                            "end": "\"",
+                            "name": "string.quoted.double.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ] 
+                        },
+                        {
+                            "begin": "'",
+                            "end": "'",
+                            "name": "string.quoted.single.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ]
+                        }
+                    ]
+                },
+                {
+                    "name": "meta.attribute.binding.aurelia.html",
+                    "begin": "\\b([a-zA-Z0-9-]+)(\\.(bind|trigger|delegate|capture|one-way|two-way|from-view|to-view|for))\\b\\s*(=)", 
+                    "beginCaptures": {
+                        "1": { "name": "entity.other.attribute-name.property.aurelia.html" },
+                        "2": { "name": "keyword.operator.binding.aurelia.html" },
+                        "3": { "name": "keyword.control.binding.aurelia.html" },
+                        "4": { "name": "punctuation.separator.key-value.html" }
+                    },
+                    "end": "(?=[\\s>/])",
+                    "patterns": [
+                         {
+                            "begin": "\"",
+                            "end": "\"",
+                            "name": "string.quoted.double.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ] 
+                        },
+                        {
+                            "begin": "'",
+                            "end": "'",
+                            "name": "string.quoted.single.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ]
+                        }
+                    ]
+                },
+                { "include": "text.html.basic#attribute" } 
+            ]
         },
         {
             "begin": "\\$\\{",
-            "beginCaptures": {
-                "0": { "name": "punctuation.definition.interpolation.begin.aurelia" }
-            },
+            "beginCaptures": { "0": { "name": "punctuation.definition.interpolation.begin.aurelia" } },
             "end": "\\}",
-            "endCaptures": {
-                "0": { "name": "punctuation.definition.interpolation.end.aurelia" }
-            },
+            "endCaptures": { "0": { "name": "punctuation.definition.interpolation.end.aurelia" } },
             "name": "meta.interpolation.aurelia",
-            "patterns": [
-                {
-                    "include": "source.ts"
-                }
-            ]
+            "contentName": "meta.embedded.expression.aurelia.ts", 
+            "patterns": [ { "include": "source.ts" } ]
+        },
+        { 
+            "include": "text.html.basic" 
         }
-    ],
-    "injectionSelector": "L:text.html - (meta.tag), L:text.html meta.tag - (punctuation.definition.tag.begin, punctuation.definition.tag.end)"
+    ]
 }
