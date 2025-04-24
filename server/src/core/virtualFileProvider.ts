@@ -195,26 +195,23 @@ export function updateVirtualFile(
             const identifierRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
             let currentIndex = 0;
             let result = '';
-
+            let transformationIndex = 0; // Keep track of transformation index for detailed mapping
             for (const match of expr.expression.matchAll(identifierRegex)) {
                 const capturedIdentifier = match[1];
-                const matchIndex = match.index ?? 0; // matchAll provides index
-
-                // Append the text between the last match and this one
+                const matchIndex = match.index ?? 0;
                 result += expr.expression.substring(currentIndex, matchIndex);
-
                 let replacement = match[0];
                 let offsetDelta = 0;
                 if (capturedIdentifier !== 'this' && memberNames.includes(capturedIdentifier) && !['true', 'false', 'null', 'undefined'].includes(capturedIdentifier)) {
                     const transformed = `_this.${capturedIdentifier}`;
                     replacement = transformed;
-                    offsetDelta = 6;
+                    offsetDelta = 6; // Length of "_this."
                     const htmlStart = originalHtmlExprOffset + matchIndex;
                     const htmlEnd = htmlStart + capturedIdentifier.length;
                     const virtualValueRelativeStart = result.length;
                     currentExpressionTransformsTemp.push({
                         htmlRange: { start: htmlStart, end: htmlEnd },
-                        virtualRange: { start: -1, end: -1 },
+                        virtualRange: { start: -1, end: -1 }, // Placeholder, calculated later
                         offsetDelta: offsetDelta,
                         originalVirtualStart: virtualValueRelativeStart
                     });
@@ -222,43 +219,43 @@ export function updateVirtualFile(
                 result += replacement;
                 currentIndex = matchIndex + match[0].length;
             }
-            // Append any remaining text after the last match
             result += expr.expression.substring(currentIndex);
             currentVirtualExprContent = result;
             // +++ End matchAll change +++
         }
 
-        // Construct line and calculate ranges
+        // Construct line and calculate ranges, ADDING the comment
+        const ignoreComment = `// @ts-ignore TS2341: Accessing private/protected member from template is allowed\n`;
         const linePrefix = `const ${placeholderVarName} = (`;
         const lineSuffix = `); // Origin: ${expr.type}\n`;
-        const lineContent = linePrefix + currentVirtualExprContent + lineSuffix;
-        const virtualBlockStart = currentOffset;
-        const virtualValueStart = virtualBlockStart + linePrefix.length;
+        const lineContent = ignoreComment + linePrefix + currentVirtualExprContent + lineSuffix;
+        
+        const virtualBlockStart = currentOffset; // Block starts with the comment now
+        const virtualValueStart = virtualBlockStart + ignoreComment.length + linePrefix.length; // Value starts after comment and prefix
         const virtualValueEnd = virtualValueStart + currentVirtualExprContent.length;
-        const virtualBlockEnd = virtualBlockStart + lineContent.length;
+        const virtualBlockEnd = virtualBlockStart + lineContent.length; // Block ends after suffix
 
         // Calculate final absolute virtual ranges for transformations
-        // +++ Create the final array with the correct type +++
         const finalTransformations: DetailedMapping['transformations'] = currentExpressionTransformsTemp.map(t => {
             const transformedLength = (t.htmlRange.end - t.htmlRange.start) + t.offsetDelta;
-            const finalVirtualStart = virtualValueStart + t.originalVirtualStart;
+            const finalVirtualStart = virtualValueStart + t.originalVirtualStart; // Use adjusted virtualValueStart
             const finalVirtualEnd = finalVirtualStart + transformedLength;
             return {
                 htmlRange: t.htmlRange,
                 virtualRange: { start: finalVirtualStart, end: finalVirtualEnd },
                 offsetDelta: t.offsetDelta
-            }; // Exclude the temporary property
+            };
         });
 
         virtualContent += lineContent;
         detailedMappings.push({
             htmlExpressionLocation: expr.htmlLocation,
             virtualBlockRange: { start: virtualBlockStart, end: virtualBlockEnd },
-            virtualValueRange: { start: virtualValueStart, end: virtualValueEnd },
+            virtualValueRange: { start: virtualValueStart, end: virtualValueEnd }, // Store CORRECTED value range
             type: expr.type,
-            transformations: finalTransformations // Assign the final array
+            transformations: finalTransformations
         });
-        currentOffset = virtualBlockEnd;
+        currentOffset = virtualBlockEnd; // Update offset for next iteration
     });
 
     // Store results
