@@ -281,6 +281,7 @@ export function scanWorkspaceForAureliaComponents(
 
         for (const sourceFile of sourceFiles) {
             const isDeclaration = sourceFile.isDeclarationFile;
+            // Normalize paths before comparison
             const normalizedFileName = sourceFile.fileName.replace(/\\/g, '/');
             const normalizedWorkspaceRoot = workspaceRoot.replace(/\\/g, '/');
             const normalizedWorkspaceRootWithSlash = normalizedWorkspaceRoot.endsWith('/')
@@ -315,38 +316,71 @@ export function scanWorkspaceForAureliaComponents(
                                 if (ts.isIdentifier(decoratorExpr.expression)) {
                                     decoratorName = decoratorExpr.expression.getText(sourceFile);
                                 }
-                                if (decoratorExpr.arguments.length > 0 && ts.isStringLiteral(decoratorExpr.arguments[0])) {
-                                    firstArg = decoratorExpr.arguments[0].text;
-                                }
                             } else if (ts.isIdentifier(decoratorExpr)) {
                                 decoratorName = decoratorExpr.getText(sourceFile);
                             }
 
                             if (decoratorName === 'customElement') {
                                 isExplicitlyDecorated = true;
-                                const elementName = firstArg ?? toKebabCase(className);
+                                let elementName: string | undefined;
+                                if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                                    const firstArgument = decoratorExpr.arguments[0];
+                                    if (ts.isStringLiteral(firstArgument)) {
+                                        elementName = firstArgument.text;
+                                    } else if (ts.isObjectLiteralExpression(firstArgument)) {
+                                        for (const prop of firstArgument.properties) {
+                                            if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === 'name') {
+                                                if (ts.isStringLiteral(prop.initializer)) {
+                                                    elementName = prop.initializer.text;
+                                                    break; // Found name property
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Fallback to kebab-case if name not found in decorator args
+                                elementName = elementName ?? toKebabCase(className);
+
                                 if (elementName && !foundComponents.has(elementName)) {
-                                    const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                                    const componentInfo: AureliaComponentInfo = { 
-                                        uri: fileUri, 
-                                        type: 'element', 
-                                        name: elementName, 
+                                    const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
+                                    const componentInfo: AureliaComponentInfo = {
+                                        uri: fileUri,
+                                        type: 'element',
+                                        name: elementName,
                                         bindables: bindables,
-                                        className: className, 
-                                        sourceFile: sourceFile.fileName 
+                                        className: className,
+                                        sourceFile: sourceFile.fileName
                                     };
                                     foundComponents.set(elementName, componentInfo);
-                                    
+
                                     // Register component file
                                     registerComponentFile(fileUri, sourceFile.fileName);
-                                    
+
                                     log('info', `[scanWorkspace] --> Found Element: ${elementName} (Bindables: ${bindables.join(', ')}) in ${sourceFile.fileName}`);
                                 }
                                 break;
                             }
                             if (decoratorName === 'customAttribute') {
                                 isExplicitlyDecorated = true;
-                                const attributeName = firstArg ?? toKebabCase(className);
+                                let attributeName: string | undefined;
+                                if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                                    const firstArgument = decoratorExpr.arguments[0];
+                                    if (ts.isStringLiteral(firstArgument)) {
+                                        attributeName = firstArgument.text;
+                                    } else if (ts.isObjectLiteralExpression(firstArgument)) {
+                                        for (const prop of firstArgument.properties) {
+                                            if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === 'name') {
+                                                if (ts.isStringLiteral(prop.initializer)) {
+                                                    attributeName = prop.initializer.text;
+                                                    break; // Found name property
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Fallback to kebab-case if name not found in decorator args
+                                attributeName = attributeName ?? toKebabCase(className);
+
                                  if (attributeName && !foundComponents.has(attributeName)) {
                                     const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
                                     const componentInfo: AureliaComponentInfo = { 
@@ -454,7 +488,12 @@ export function updateComponentInfoForFile(
     if (!program) return false;
     const filePath = URI.parse(fileUri).fsPath;
     const sourceFile = program.getSourceFile(filePath);
-    if (!sourceFile || sourceFile.isDeclarationFile || !sourceFile.fileName.startsWith(workspaceRoot)) {
+
+    // Normalize paths before comparison
+    const normalizedFileName = sourceFile?.fileName.replace(/\\/g, '/');
+    const normalizedWorkspaceRoot = workspaceRoot.replace(/\\/g, '/');
+
+    if (!sourceFile || sourceFile.isDeclarationFile || !normalizedFileName || !normalizedFileName.startsWith(normalizedWorkspaceRoot)) {
         return false; // Not a relevant source file
     }
 
@@ -496,49 +535,82 @@ export function updateComponentInfoForFile(
                         if (ts.isIdentifier(decoratorExpr.expression)) {
                             decoratorName = decoratorExpr.expression.getText(sourceFile);
                         }
-                        if (decoratorExpr.arguments.length > 0 && ts.isStringLiteral(decoratorExpr.arguments[0])) {
-                            firstArg = decoratorExpr.arguments[0].text;
-                        }
                     } else if (ts.isIdentifier(decoratorExpr)) {
                         decoratorName = decoratorExpr.getText(sourceFile);
                     }
 
                     if (decoratorName === 'customElement') {
-                        const elementName = firstArg ?? toKebabCase(className);
-                        if (elementName) {
-                             componentFound = true;
-                             
-                             // Track if name or component definition changed
-                             const existingComponent = aureliaProjectComponents.get(elementName);
-                             if (!existingComponent || existingComponent.uri !== fileUri) {
-                                 mapChanged = true;
-                             }
-                             
-                             // Remove from existing
-                             existingComponents.delete(elementName);
-                             
-                             // Add/update component
-                             const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
-                             const componentInfo: AureliaComponentInfo = { 
+                        let elementName: string | undefined;
+                        if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                            const firstArgument = decoratorExpr.arguments[0];
+                            if (ts.isStringLiteral(firstArgument)) {
+                                elementName = firstArgument.text;
+                            } else if (ts.isObjectLiteralExpression(firstArgument)) {
+                                for (const prop of firstArgument.properties) {
+                                    if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === 'name') {
+                                        if (ts.isStringLiteral(prop.initializer)) {
+                                            elementName = prop.initializer.text;
+                                            break; // Found name property
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                         // Fallback to kebab-case if name not found in decorator args
+                         elementName = elementName ?? toKebabCase(className);
+
+                        if (elementName && !aureliaProjectComponents.has(elementName)) {
+                            componentFound = true;
+                            
+                            // Track if name or component definition changed
+                            const existingComponent = aureliaProjectComponents.get(elementName);
+                            if (!existingComponent || existingComponent.uri !== fileUri) {
+                                mapChanged = true;
+                            }
+                            
+                            // Remove from existing
+                            existingComponents.delete(elementName);
+                            
+                            // Add/update component
+                            const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                            const componentInfo: AureliaComponentInfo = { 
                                 uri: fileUri, 
                                 type: 'element', 
                                 name: elementName, 
                                 bindables: bindables,
                                 className: className, 
                                 sourceFile: filePath 
-                             };
-                             aureliaProjectComponents.set(elementName, componentInfo);
-                             
-                             // Register component file
-                             registerComponentFile(fileUri, filePath);
-                             
-                             log('info', `[File Watch] Updated/Added Element: ${elementName} (Bindables: ${bindables.join(', ')}) from ${filePath}`);
+                            };
+                            aureliaProjectComponents.set(elementName, componentInfo);
+                            
+                            // Register component file
+                            registerComponentFile(fileUri, filePath);
+                            
+                            log('info', `[File Watch] Updated/Added Element: ${elementName} (Bindables: ${bindables.join(', ')}) from ${filePath}`);
                         }
                         break;
                     }
                     if (decoratorName === 'customAttribute') {
-                        const attributeName = firstArg ?? toKebabCase(className);
-                         if (attributeName) {
+                        let attributeName: string | undefined;
+                         if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                            const firstArgument = decoratorExpr.arguments[0];
+                            if (ts.isStringLiteral(firstArgument)) {
+                                attributeName = firstArgument.text;
+                            } else if (ts.isObjectLiteralExpression(firstArgument)) {
+                                for (const prop of firstArgument.properties) {
+                                    if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === 'name') {
+                                        if (ts.isStringLiteral(prop.initializer)) {
+                                            attributeName = prop.initializer.text;
+                                            break; // Found name property
+                                        }
+                                    }
+                                }
+                            }
+                         }
+                         // Fallback to kebab-case if name not found in decorator args
+                         attributeName = attributeName ?? toKebabCase(className);
+
+                         if (attributeName && !aureliaProjectComponents.has(attributeName)) {
                              componentFound = true;
                              
                              // Track if name or component definition changed

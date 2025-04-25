@@ -76,6 +76,23 @@ connection.onInitialize((params) => {
     };
     return result;
 });
+// Runs after the server has been initialized and capabilities negotiated
+connection.onInitialized(() => {
+    // Register for file watching
+    connection.client.register(node_1.DidChangeWatchedFilesNotification.type, {
+        watchers: [
+            {
+                // Construct RelativePattern object directly
+                globPattern: {
+                    baseUri: vscode_uri_1.URI.file(workspaceRoot).toString(),
+                    pattern: '**/*.ts'
+                },
+                kind: node_1.WatchKind.Create | node_1.WatchKind.Change | node_1.WatchKind.Delete
+            }
+        ]
+    });
+    (0, logger_1.log)('info', '[onInitialized] File watcher registered for **/*.ts files.');
+});
 documents.onDidChangeContent((change) => {
     // +++ Add log to check if handler is called for TS files +++
     (0, logger_1.log)('debug', `[onDidChangeContent] Handler called for URI: ${change.document.uri}`);
@@ -178,6 +195,7 @@ connection.onDidChangeWatchedFiles((params) => {
             const urisToProcess = new Set(componentUpdateQueue); // Copy queue
             componentUpdateQueue.clear(); // Clear original queue
             let needsFullRescanOnError = false;
+            let anyComponentMapChanged = false; // <<< Add flag to track changes
             urisToProcess.forEach(uri => {
                 try {
                     const changedFsPath = vscode_uri_1.URI.parse(uri).fsPath;
@@ -186,7 +204,7 @@ connection.onDidChangeWatchedFiles((params) => {
                     const componentMapChanged = (0, componentScanner_1.updateComponentInfoForFile)(uri, languageService, workspaceRoot, aureliaProjectComponents);
                     if (componentMapChanged) {
                         (0, logger_1.log)('info', `[File Watch Debounce] Component map potentially updated by change to ${uri}`);
-                        // Future: Could potentially trigger targeted updates based on this
+                        anyComponentMapChanged = true; // <<< Set flag if map changed
                     }
                     // +++ 2. Check if it's a ViewModel for any OPEN Aurelia documents +++
                     for (const [htmlUriKey, docInfo] of aureliaDocuments.entries()) {
@@ -213,12 +231,23 @@ connection.onDidChangeWatchedFiles((params) => {
                     needsFullRescanOnError = true;
                 }
             });
+            // If any error occurred, trigger a full rescan
             if (needsFullRescanOnError) {
-                connection.console.warn('[File Watch Debounce] Triggering full rescan due to errors during processing.');
-                // +++ Call imported scanWorkspaceForAureliaComponents +++
-                (0, componentScanner_1.scanWorkspaceForAureliaComponents)(languageService, workspaceRoot, aureliaProjectComponents); // Fallback to full scan on error
+                (0, logger_1.log)('warn', `[File Watch Debounce] Triggering full component rescan due to processing error.`);
+                // Trigger full scan after a short delay
+                if (componentUpdateTimer)
+                    clearTimeout(componentUpdateTimer);
+                componentUpdateTimer = setTimeout(() => {
+                    (0, logger_1.log)('info', '[File Watch Debounce] Triggering full rescan due to processing error.');
+                    (0, componentScanner_1.scanWorkspaceForAureliaComponents)(languageService, workspaceRoot, aureliaProjectComponents);
+                }, 500);
             }
-            componentUpdateTimer = undefined; // Clear timer reference
+            // +++ Add check for map changes to trigger update signal +++
+            else if (anyComponentMapChanged) { // <<< Check the flag after processing all files
+                (0, logger_1.log)('info', '[File Watch Debounce] Component map was updated. Requesting semantic token refresh.');
+                // Request the client to refresh semantic tokens
+                connection.languages.semanticTokens.refresh();
+            }
         }, COMPONENT_UPDATE_DEBOUNCE_MS);
     }
 });
@@ -255,8 +284,9 @@ connection.onCodeAction(async (params) => {
 });
 // --- Rename Prepare ---
 connection.onPrepareRename(async (params) => {
-    // +++ Call imported handler +++
-    return (0, renameProvider_1.handlePrepareRenameRequest)(params, documents, aureliaDocuments, languageService);
+    // +++ Call imported handler with component map +++
+    return (0, renameProvider_1.handlePrepareRenameRequest)(params, documents, aureliaDocuments, languageService, aureliaProjectComponents // <<< Pass the component map here
+    );
 });
 // --- Rename Request ---
 connection.onRenameRequest(async (params) => {

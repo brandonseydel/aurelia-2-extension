@@ -10,9 +10,11 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { TextDocuments } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
-import { AureliaDocumentInfo, DetailedMapping } from '../common/types'; 
+import { AureliaDocumentInfo, DetailedMapping, AureliaProjectComponentMap } from '../common/types'; 
 import { log } from '../utils/logger';
 import { mapHtmlOffsetToVirtual } from '../core/virtualFileProvider';
+import { getTagAtOffset } from '../utils/htmlParsing';
+import { getWordRangeAtPosition } from '../utils/utilities';
 
 // +++ Define Cache Type +++
 type ViewModelMembersCache = Map<string, { content: string | undefined; members: string[] }>;
@@ -24,91 +26,150 @@ export async function handlePrepareRenameRequest(
     params: PrepareRenameParams,
     documents: TextDocuments<TextDocument>,
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
-    languageService: ts.LanguageService
+    languageService: ts.LanguageService,
+    aureliaProjectComponents: AureliaProjectComponentMap
 ): Promise<LSPRange | { range: LSPRange, placeholder: string } | null> {
-    const htmlUri = params.textDocument.uri;
-    const document = documents.get(htmlUri);
-    if (!document || !htmlUri.endsWith('.html')) return null;
-
-    const docInfo = aureliaDocuments.get(htmlUri);
-    if (!docInfo) return null;
+    const triggerUri = params.textDocument.uri;
+    const document = documents.get(triggerUri);
+    if (!document) return null; 
 
     const offset = document.offsetAt(params.position);
 
-    let activeMapping: DetailedMapping | undefined;
-    for (const mapping of docInfo.mappings) {
-        if (mapping.htmlExpressionLocation.startOffset <= offset && offset <= mapping.htmlExpressionLocation.endOffset) {
-            activeMapping = mapping;
-            break;
-        }
-    }
+    if (triggerUri.endsWith('.html')) {
+        const text = document.getText();
+        const tagInfo = await getTagAtOffset(text, offset);
 
-    if (!activeMapping) return null; 
+        if (tagInfo) {
+            log('debug', `[onPrepareRename] Found tag '${tagInfo.tagName}' at offset ${offset}. Type: ${tagInfo.type}`);
+            const componentInfo = aureliaProjectComponents.get(tagInfo.tagName);
 
-    const virtualOffset = mapHtmlOffsetToVirtual(offset, activeMapping); 
-    log('debug', `[onPrepareRename] Mapped HTML Offset ${offset} to Virtual Offset ${virtualOffset}`);
+            if (componentInfo && (componentInfo.type === 'element' || componentInfo.type === 'attribute')) {
+                 log('debug', `[onPrepareRename] Tag '${tagInfo.tagName}' is a known Aurelia ${componentInfo.type}. Allowing rename.`);
+                
+                 let renameRange: LSPRange | undefined;
+                 if (tagInfo.locations) {
+                     const relevantLocation = tagInfo.type === 'start' ? tagInfo.locations.startTag : tagInfo.locations.endTag;
+                     if (relevantLocation) {
+                         const startOffsetCorrection = tagInfo.type === 'start' ? 1 : 2;
+                         const startPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection);
+                         const endPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection + tagInfo.tagName.length);
+                         renameRange = LSPRange.create(startPos, endPos);
+                     }
+                 }
 
-    const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
-    const definitionInfo = languageService.getDefinitionAndBoundSpan(virtualFsPath, virtualOffset);
-    if (!definitionInfo || !definitionInfo.definitions || definitionInfo.definitions.length === 0) {
-        log('debug', "[onPrepareRename] No definition found at virtual offset, cannot rename.");
-        return null;
-    }
-    const originVirtualSpan = definitionInfo.textSpan;
+                 if (!renameRange) {
+                      log('warn', `[onPrepareRename] Could not get precise location for tag '${tagInfo.tagName}' from parser. Using word range fallback.`);
+                     const wordRange = getWordRangeAtPosition(document, params.position);
+                     if (wordRange && document.getText(wordRange) === tagInfo.tagName) {
+                        renameRange = wordRange;
+                     } else {
+                         log('warn', `[onPrepareRename] Fallback word range check failed for tag '${tagInfo.tagName}'. Denying rename.`);
+                         return null;
+                     }
+                 }
 
-    const renameInfo = languageService.getRenameInfo(virtualFsPath, originVirtualSpan.start, { allowRenameOfImportPath: false });
-    if (!renameInfo.canRename) {
-        log('debug', "[onPrepareRename] TS reports rename not possible for the identified span.");
-        return null;
-    }
-
-    // Map Virtual Span back to HTML Range
-    const virtualSpanStart = originVirtualSpan.start;
-    const virtualSpanEnd = virtualSpanStart + originVirtualSpan.length;
-    let htmlStartOffset: number | undefined;
-    let htmlEndOffset: number | undefined;
-
-    const containingTransformation = activeMapping.transformations.find(t => 
-        virtualSpanStart >= t.virtualRange.start && virtualSpanStart < t.virtualRange.end
-    );
-
-    if (containingTransformation) {
-        htmlStartOffset = containingTransformation.htmlRange.start;
-        htmlEndOffset = containingTransformation.htmlRange.end;
-    } else {
-        let accumulatedOffsetDeltaBeforeStart = 0;
-        for (const transform of activeMapping.transformations) {
-            if (transform.virtualRange.end <= virtualSpanStart) {
-                accumulatedOffsetDeltaBeforeStart += transform.offsetDelta;
+                 log('info', `[onPrepareRename] Allowing rename for tag '${tagInfo.tagName}' at range: ${JSON.stringify(renameRange)}`);
+                 return renameRange; 
+            } else {
+                log('debug', `[onPrepareRename] Tag '${tagInfo.tagName}' found, but it's not a known Aurelia component. Passing through.`);
             }
         }
-        const baseHtmlOffset = activeMapping.htmlExpressionLocation.startOffset;
-        const baseVirtualOffset = activeMapping.virtualValueRange.start;
-        htmlStartOffset = baseHtmlOffset + (virtualSpanStart - baseVirtualOffset) - accumulatedOffsetDeltaBeforeStart;
-        const spanLength = virtualSpanEnd - virtualSpanStart; 
-        htmlEndOffset = htmlStartOffset + spanLength;
+    } else if (triggerUri.endsWith('.ts')) {
+        log('debug', `[onPrepareRename] TS file detected, decorator rename check not yet implemented.`);
     }
 
-    // Clamp and validate
-    const htmlExprStart = activeMapping.htmlExpressionLocation.startOffset;
-    const htmlExprEnd = activeMapping.htmlExpressionLocation.endOffset;
-    const clampedHtmlStart = Math.max(htmlStartOffset, htmlExprStart);
-    let clampedHtmlEnd = Math.min(htmlEndOffset, htmlExprEnd);
-    clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
+    if (triggerUri.endsWith('.html')) {
+        const docInfo = aureliaDocuments.get(triggerUri);
+        if (!docInfo) return null; 
 
-    if (clampedHtmlStart > htmlExprEnd || clampedHtmlEnd < clampedHtmlStart) {
-        log('warn', `[onPrepareRename] Invalid mapped HTML range after clamping [${clampedHtmlStart}-${clampedHtmlEnd}]`);
-        return null;
+        let activeMapping: DetailedMapping | undefined;
+        for (const mapping of docInfo.mappings) {
+            if (mapping.htmlExpressionLocation.startOffset <= offset && offset <= mapping.htmlExpressionLocation.endOffset) {
+                activeMapping = mapping;
+                break;
+            }
+        }
+
+        if (!activeMapping) {
+            log('debug', `[onPrepareRename] HTML offset ${offset} not on tag (checked above) and not in expression.`);
+            return null; 
+        }
+        
+        const virtualOffset = mapHtmlOffsetToVirtual(offset, activeMapping); 
+        log('debug', `[onPrepareRename] Mapped HTML Offset ${offset} to Virtual Offset ${virtualOffset} for expression rename.`);
+    
+        const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
+        const virtualFile = languageService.getProgram()?.getSourceFile(virtualFsPath);
+        if (!virtualFile) {
+             log('warn', `[onPrepareRename] Could not get virtual source file ${virtualFsPath} from program.`);
+             return null;
+        }
+
+        const definitionInfo = languageService.getDefinitionAndBoundSpan(virtualFsPath, virtualOffset);
+        if (!definitionInfo || !definitionInfo.definitions || definitionInfo.definitions.length === 0) {
+            log('debug', "[onPrepareRename] No definition found at virtual offset, cannot rename expression symbol.");
+            return null;
+        }
+        const originVirtualSpan = definitionInfo.textSpan;
+    
+        const renameInfo = languageService.getRenameInfo(virtualFsPath, originVirtualSpan.start, { allowRenameOfImportPath: false });
+        if (!renameInfo.canRename) {
+            log('debug', "[onPrepareRename] TS reports rename not possible for the identified expression span.");
+            return null;
+        }
+    
+        const virtualSpanStart = originVirtualSpan.start;
+        const virtualSpanEnd = virtualSpanStart + originVirtualSpan.length;
+        let htmlStartOffset: number | undefined;
+        let htmlEndOffset: number | undefined;
+    
+        const containingTransformation = activeMapping.transformations.find(t => 
+            virtualSpanStart >= t.virtualRange.start && virtualSpanStart < t.virtualRange.end
+        );
+    
+        if (containingTransformation) {
+            htmlStartOffset = containingTransformation.htmlRange.start;
+            const htmlLength = containingTransformation.htmlRange.end - containingTransformation.htmlRange.start;
+            htmlEndOffset = containingTransformation.htmlRange.start + htmlLength; 
+            log('debug', `[onPrepareRename][Expr] Using containing transformation range: ${htmlStartOffset}-${htmlEndOffset}`);
+        } else {
+            log('debug', `[onPrepareRename][Expr] Virtual span ${virtualSpanStart}-${virtualSpanEnd} not in transformation. Mapping manually.`);
+            let accumulatedOffsetDeltaBeforeStart = 0;
+            for (const transform of activeMapping.transformations) {
+                if (transform.virtualRange.end <= virtualSpanStart) {
+                    accumulatedOffsetDeltaBeforeStart += transform.offsetDelta;
+                }
+            }
+            const baseHtmlOffset = activeMapping.htmlExpressionLocation.startOffset;
+            const baseVirtualOffset = activeMapping.virtualValueRange.start;
+            htmlStartOffset = baseHtmlOffset + (virtualSpanStart - baseVirtualOffset) - accumulatedOffsetDeltaBeforeStart;
+            const spanLength = virtualSpanEnd - virtualSpanStart;
+            htmlEndOffset = htmlStartOffset + spanLength;
+        }
+    
+        const htmlExprStart = activeMapping.htmlExpressionLocation.startOffset;
+        const htmlExprEnd = activeMapping.htmlExpressionLocation.endOffset;
+        const clampedHtmlStart = Math.max(htmlStartOffset ?? htmlExprStart, htmlExprStart); 
+        let clampedHtmlEnd = Math.min(htmlEndOffset ?? htmlExprEnd, htmlExprEnd); 
+        clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
+    
+        if (clampedHtmlStart > htmlExprEnd || clampedHtmlEnd < clampedHtmlStart || htmlStartOffset === undefined || htmlEndOffset === undefined) {
+            log('warn', `[onPrepareRename][Expr] Invalid mapped HTML range after clamping [${clampedHtmlStart}-${clampedHtmlEnd}], original: [${htmlStartOffset}-${htmlEndOffset}]`);
+            return null;
+        }
+    
+        const htmlRange = LSPRange.create(
+            document.positionAt(clampedHtmlStart),
+            document.positionAt(clampedHtmlEnd)
+        );
+        const placeholder = document.getText(htmlRange);
+    
+        log('info', `[onPrepareRename] Rename possible for range (expression): ${JSON.stringify(htmlRange)}, placeholder: ${placeholder}`);
+        return { range: htmlRange, placeholder };
     }
 
-    const htmlRange = LSPRange.create(
-        document.positionAt(clampedHtmlStart),
-        document.positionAt(clampedHtmlEnd)
-    );
-    const placeholder = document.getText(htmlRange);
-
-    log('info', `[onPrepareRename] Rename possible for range: ${JSON.stringify(htmlRange)}, placeholder: ${placeholder}`);
-    return { range: htmlRange, placeholder };
+    log('debug', `[onPrepareRename] Offset ${offset} in ${triggerUri} did not correspond to a renameable Aurelia entity (tag, decorator name, or expression symbol).`);
+    return null; 
 }
 
 /**
@@ -206,7 +267,8 @@ export async function handleRenameRequest(
 
              if (containingTransformation) {
                  htmlStartOffset = containingTransformation.htmlRange.start;
-                 htmlEndOffset = containingTransformation.htmlRange.end;
+                 const htmlLength = containingTransformation.htmlRange.end - containingTransformation.htmlRange.start;
+                 htmlEndOffset = containingTransformation.htmlRange.start + htmlLength;
              } else {
                  let accumulatedOffsetDeltaBeforeStart = 0;
                  for (const transform of locationMapping.transformations) {

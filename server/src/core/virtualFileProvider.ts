@@ -225,13 +225,12 @@ export function updateVirtualFile(
         }
 
         // Construct line and calculate ranges, ADDING the comment
-        const ignoreComment = `// @ts-ignore TS2341: Accessing private/protected member from template is allowed\n`;
         const linePrefix = `const ${placeholderVarName} = (`;
         const lineSuffix = `); // Origin: ${expr.type}\n`;
-        const lineContent = ignoreComment + linePrefix + currentVirtualExprContent + lineSuffix;
+        const lineContent = linePrefix + currentVirtualExprContent + lineSuffix;
         
         const virtualBlockStart = currentOffset; // Block starts with the comment now
-        const virtualValueStart = virtualBlockStart + ignoreComment.length + linePrefix.length; // Value starts after comment and prefix
+        const virtualValueStart = virtualBlockStart + linePrefix.length; // Value starts after comment and prefix
         const virtualValueEnd = virtualValueStart + currentVirtualExprContent.length;
         const virtualBlockEnd = virtualBlockStart + lineContent.length; // Block ends after suffix
 

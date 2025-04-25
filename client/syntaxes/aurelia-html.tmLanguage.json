@@ -66,6 +66,31 @@
                         }
                     ]
                 },
+                {
+                    "name": "meta.attribute.repeat-for.aurelia.html",
+                    "begin": "\\b(repeat\\.for)\\b\\s*(=)",
+                    "beginCaptures": {
+                        "1": { "name": "entity.other.attribute-name.repeat-for.aurelia.html" },
+                        "2": { "name": "punctuation.separator.key-value.html" }
+                    },
+                    "end": "(?=[\\s>/])",
+                    "patterns": [
+                        {
+                            "begin": "\"",
+                            "end": "\"",
+                            "name": "string.quoted.double.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ] 
+                        },
+                        {
+                            "begin": "'",
+                            "end": "'",
+                            "name": "string.quoted.single.html",
+                            "contentName": "meta.embedded.expression.aurelia.ts",
+                            "patterns": [ { "include": "source.ts" } ]
+                        }
+                    ]
+                },
                 { "include": "text.html.basic#attribute" } 
             ]
         },

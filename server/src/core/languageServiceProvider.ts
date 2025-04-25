@@ -106,7 +106,7 @@ export function createLanguageServiceInstance(
         esModuleInterop: true,
         allowJs: true,
         allowSyntheticDefaultImports: true,
-        baseUrl: workspaceRoot,
+        baseUrl: workspaceRoot,        
         // experimentalDecorators: true, 
         // emitDecoratorMetadata: true,
     };

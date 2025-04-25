@@ -28,7 +28,8 @@ import {
   ReferenceParams,
   Location as LSPLocation,
   DidChangeWatchedFilesNotification,
-  RelativePattern
+  RelativePattern,
+  WatchKind
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
@@ -122,7 +123,23 @@ connection.onInitialize((params: InitializeParams) => {
   return result;
 });
 
-
+// Runs after the server has been initialized and capabilities negotiated
+connection.onInitialized(() => {
+  // Register for file watching
+  connection.client.register(DidChangeWatchedFilesNotification.type, {
+    watchers: [
+      {
+        // Construct RelativePattern object directly
+        globPattern: { 
+          baseUri: URI.file(workspaceRoot).toString(), 
+          pattern: '**/*.ts' 
+        }, 
+        kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete
+      }
+    ]
+  });
+  log('info', '[onInitialized] File watcher registered for **/*.ts files.');
+});
 
 documents.onDidChangeContent((change) => {
   // +++ Add log to check if handler is called for TS files +++
@@ -255,6 +272,8 @@ connection.onDidChangeWatchedFiles((params) => {
       componentUpdateQueue.clear(); // Clear original queue
 
       let needsFullRescanOnError = false;
+      let anyComponentMapChanged = false; // <<< Add flag to track changes
+
       urisToProcess.forEach(uri => {
         try {
           const changedFsPath = URI.parse(uri).fsPath;
@@ -264,7 +283,7 @@ connection.onDidChangeWatchedFiles((params) => {
           const componentMapChanged = updateComponentInfoForFile(uri, languageService, workspaceRoot, aureliaProjectComponents);
           if (componentMapChanged) {
             log('info', `[File Watch Debounce] Component map potentially updated by change to ${uri}`);
-            // Future: Could potentially trigger targeted updates based on this
+            anyComponentMapChanged = true; // <<< Set flag if map changed
           }
 
           // +++ 2. Check if it's a ViewModel for any OPEN Aurelia documents +++
@@ -301,13 +320,23 @@ connection.onDidChangeWatchedFiles((params) => {
         }
       });
 
+      // If any error occurred, trigger a full rescan
       if (needsFullRescanOnError) {
-        connection.console.warn('[File Watch Debounce] Triggering full rescan due to errors during processing.');
-        // +++ Call imported scanWorkspaceForAureliaComponents +++
-        scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents); // Fallback to full scan on error
+        log('warn', `[File Watch Debounce] Triggering full component rescan due to processing error.`);
+        // Trigger full scan after a short delay
+        if (componentUpdateTimer) clearTimeout(componentUpdateTimer);
+        componentUpdateTimer = setTimeout(() => {
+          log('info', '[File Watch Debounce] Triggering full rescan due to processing error.');
+          scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents);
+        }, 500);
+      }
+      // +++ Add check for map changes to trigger update signal +++
+      else if (anyComponentMapChanged) { // <<< Check the flag after processing all files
+        log('info', '[File Watch Debounce] Component map was updated. Requesting semantic token refresh.');
+        // Request the client to refresh semantic tokens
+        connection.languages.semanticTokens.refresh(); 
       }
 
-      componentUpdateTimer = undefined; // Clear timer reference
     }, COMPONENT_UPDATE_DEBOUNCE_MS);
   }
 });
@@ -373,12 +402,13 @@ connection.onCodeAction(async (params: CodeActionParams): Promise<CodeAction[] |
 
 // --- Rename Prepare ---
 connection.onPrepareRename(async (params: PrepareRenameParams): Promise<LSPRange | { range: LSPRange, placeholder: string } | null> => {
-  // +++ Call imported handler +++
+  // +++ Call imported handler with component map +++
   return handlePrepareRenameRequest(
     params,
     documents,
     aureliaDocuments,
-    languageService
+    languageService,
+    aureliaProjectComponents // <<< Pass the component map here
   );
 });
 
