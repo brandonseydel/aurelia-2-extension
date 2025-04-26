@@ -53,17 +53,22 @@ export interface AureliaDocumentInfo {
 export interface AureliaComponentInfo {
     uri: string;
     /** Is this a custom element or a custom attribute? */
-    type: 'element' | 'attribute';
+    type: 'element' | 'attribute' | 'valueConverter' | 'bindingBehavior';
     /** The canonical name of the component (e.g., 'my-element' or 'my-attribute'). */
     name: string;
     /** List of bindable property names, if applicable. */
-    bindables?: string[];
+    bindables: AureliaBindableInfo[];
     /** The TypeScript class name, if known. */
     className?: string;
      /** Path to the source file containing the definition */
      sourceFile?: string;
 }
 
+// Interface for bindable property details
+export interface AureliaBindableInfo {
+    propertyName: string; // The name of the property in the TS class (e.g., myValue)
+    attributeName?: string; // The explicit HTML attribute name if defined in @bindable (e.g., 'my-attribute')
+}
 
 /**
  * Map holding discovered Aurelia components in the project.

@@ -109,7 +109,7 @@ documents.onDidChangeContent((change) => {
         }
         // +++ END Invalidate Cache +++
         // Now update the virtual file (it will refetch members if cache was invalidated)
-        (0, virtualFileProvider_1.updateVirtualFile)(htmlUriString, change.document.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache);
+        (0, virtualFileProvider_1.updateVirtualFile)(htmlUriString, change.document.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache, aureliaProjectComponents);
     }
     else if (uri.endsWith('.ts')) {
         // Invalidate cache DIRECTLY when the TS file changes (Keep this)
@@ -126,7 +126,7 @@ documents.onDidChangeContent((change) => {
                         const currentHtmlDoc = documents.get(htmlUriKey);
                         if (currentHtmlDoc) {
                             (0, logger_1.log)('info', `[onDidChangeContent][Delayed] Updating virtual file for ${htmlUriKey} after TS change.`);
-                            (0, virtualFileProvider_1.updateVirtualFile)(currentHtmlDoc.uri, currentHtmlDoc.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache);
+                            (0, virtualFileProvider_1.updateVirtualFile)(currentHtmlDoc.uri, currentHtmlDoc.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache, aureliaProjectComponents);
                         }
                     }, 500);
                 }
@@ -214,7 +214,7 @@ connection.onDidChangeWatchedFiles((params) => {
                             if (openHtmlDoc) {
                                 (0, logger_1.log)('info', `[File Watch Debounce] Watched ViewModel ${changedFsPath} changed. Triggering virtual file update for OPEN document: ${htmlUriKey}`);
                                 // Regenerate the virtual file for the open HTML document
-                                (0, virtualFileProvider_1.updateVirtualFile)(openHtmlDoc.uri, openHtmlDoc.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache);
+                                (0, virtualFileProvider_1.updateVirtualFile)(openHtmlDoc.uri, openHtmlDoc.getText(), aureliaDocuments, virtualFiles, languageService, documents, connection, viewModelMembersCache, aureliaProjectComponents);
                             }
                             else {
                                 (0, logger_1.log)('debug', `[File Watch Debounce] Watched ViewModel ${changedFsPath} changed, but associated HTML doc ${htmlUriKey} is not open. Virtual file will update on open.`);
@@ -291,7 +291,7 @@ connection.onPrepareRename(async (params) => {
 // --- Rename Request ---
 connection.onRenameRequest(async (params) => {
     // +++ Call imported handler with cache +++
-    return (0, renameProvider_1.handleRenameRequest)(params, documents, aureliaDocuments, languageService, viewModelMembersCache);
+    return (0, renameProvider_1.handleRenameRequest)(params, documents, aureliaDocuments, languageService, aureliaProjectComponents);
 });
 // --- Hover --- 
 connection.onHover(async (params) => {

@@ -22,6 +22,7 @@ import { log } from '../utils/logger';
 import { getViewModelMemberNames, mapHtmlOffsetToVirtual } from '../core/virtualFileProvider';
 import { AURELIA_BINDING_SUFFIXES, AURELIA_TEMPLATE_CONTROLLERS } from '../constants'; // Import necessary constants
 import { extractExpressionsFromHtml } from '../core/htmlParser'; // <<< REMOVE TYPE IMPORT
+import { toKebabCase } from '../utils/utilities'; // <<< ADD IMPORT >>>
 
 // Type definitions
 // Remove local type definition
@@ -57,9 +58,9 @@ export function handleCompletionRequest(
         const { expressions: freshExpressions } = extractExpressionsFromHtml(currentText);
 
         // Use ORIGINAL OFFSET for the check loop
-        log('debug', `[onCompletion] Checking offset ${offset} against ${freshExpressions.length} freshly parsed expressions.`); 
+        log('debug', `[onCompletion] Checking offset ${offset} against ${freshExpressions.length} freshly parsed expressions.`);
 
-        for (const expr of freshExpressions) { 
+        for (const expr of freshExpressions) {
             const mapStart = expr.htmlLocation.startOffset;
             const mapEnd = expr.htmlLocation.endOffset;
 
@@ -67,10 +68,10 @@ export function handleCompletionRequest(
             let checkStart = mapStart;
             let checkEnd = mapEnd;
             if (expr.type === 'interpolation') {
-                checkStart = mapStart - 2; 
-                checkEnd = mapEnd + 2;     
+                checkStart = mapStart - 2;
+                checkEnd = mapEnd + 2;
             }
-            
+
             // Use original offset here
             const isWithinRange = checkStart <= offset && (expr.type === 'interpolation' ? offset < checkEnd : offset <= checkEnd);
 
@@ -83,14 +84,14 @@ export function handleCompletionRequest(
             log('debug', `  - Check Result (isWithinRange): ${isWithinRange}`);
 
             if (isWithinRange) {
-                activeMapping = docInfo.mappings.find(m => 
+                activeMapping = docInfo.mappings.find(m =>
                     m.htmlExpressionLocation.startOffset === expr.htmlLocation.startOffset &&
                     m.htmlExpressionLocation.endOffset === expr.htmlLocation.endOffset &&
                     m.type === expr.type
                 );
                 if (activeMapping) {
-                     log('debug', `    - Offset ${offset} IS within range of fresh expression [${mapStart}-${mapEnd}]. Found matching original mapping.`);
-                     break; 
+                    log('debug', `    - Offset ${offset} IS within range of fresh expression [${mapStart}-${mapEnd}]. Found matching original mapping.`);
+                    break;
                 } else {
                     log('warn', `    - Offset ${offset} IS within range of fresh expression [${mapStart}-${mapEnd}], BUT could not find matching original mapping! Proceeding without expression context.`);
                 }
@@ -125,6 +126,7 @@ export function handleCompletionRequest(
             let isCompletingAttributeName = false;
             let isInsideOpeningTagSpace = false;
             let currentTagName: string | undefined = undefined;
+            let provideNewAttributeCompletions = false;
 
             function findContext(node: DefaultTreeAdapterTypes.Node, parent: DefaultTreeAdapterTypes.Element | undefined) {
                 if (!node.sourceCodeLocation) return;
@@ -182,6 +184,9 @@ export function handleCompletionRequest(
             if (charBeforeCursor === '<' || isInsideTagName) {
                 provideElementCompletions = true;
             } else if (isInsideOpeningTagSpace || isInsideAttributeName) {
+                if (!isInsideAttributeName) {
+                    provideNewAttributeCompletions = true;
+                }
                 provideAttributeCompletions = true;
             } else if (targetNode?.nodeName === '#text' && triggerChar === '<') {
                 provideElementCompletions = true;
@@ -204,7 +209,7 @@ export function handleCompletionRequest(
 
                     if (wordBeforeDot) {
                         // Check if it's a known bindable for this specific component (if it is a component)
-                        const isKnownBindable = componentInfo?.type === 'element' && (componentInfo.bindables?.includes(wordBeforeDot) ?? false);
+                        const isKnownBindable = componentInfo?.type === 'element' && (componentInfo.bindables?.some(b => b.propertyName === wordBeforeDot) ?? false);
                         // Check if it looks like a valid attribute name generally
                         const isValidAttributeName = /^[a-zA-Z][a-zA-Z0-9-]*$/.test(wordBeforeDot);
 
@@ -238,7 +243,7 @@ export function handleCompletionRequest(
                         // In this case, we don't want to provide suffix completions.
                         log('debug', `  - Word '${wordBeforeDot}' before dot is not a known bindable or valid attribute name pattern. No suffix completions.`);
                     }
-                     else {
+                    else {
                         // else: Dot was likely typed immediately after opening tag or in whitespace, not after an attribute word.
                         log('debug', `  - No valid word character found immediately before the dot. No suffix completions.`);
                     }
@@ -252,19 +257,34 @@ export function handleCompletionRequest(
             }
             else if (!provideAttributeCompletions && !provideElementCompletions && (charBeforeCursor === ' ' || triggerChar === undefined)) {
                 const textBeforeOffset = document.getText(LSPRange.create(Position.create(0, 0), params.position));
-                const tagMatch = textBeforeOffset.match(/<([a-zA-Z0-9-]+)\s*$/);
-
-                if (tagMatch) {
-                    const tagNameFromRegex = tagMatch[1];
-                    log('debug', `[onCompletion] HTML Context: Triggering attribute completions based on fallback check (Trigger: ${triggerChar}, CharBefore: ${charBeforeCursor}). Tag found: ${tagNameFromRegex}`);
-                    provideAttributeCompletions = true;
-                    currentTagName = tagNameFromRegex;
+                
+                // Find the last opening bracket before the cursor
+                const lastBracketIndex = textBeforeOffset.lastIndexOf('<');
+                
+                if (lastBracketIndex !== -1) {
+                    // Extract the text from the last bracket to the cursor
+                    const potentialTagStart = textBeforeOffset.substring(lastBracketIndex);
+                    
+                    // CORRECTED Regex: Check if substring STARTS with <tag-name followed by a space.
+                    // Removed the '+' and the '$' end anchor.
+                    const tagMatch = potentialTagStart.match(/^<([a-zA-Z0-9-]+)\s/);
+                    
+                    if (tagMatch) {
+                        const tagNameFromRegex = tagMatch[1];
+                        log('debug', `[onCompletion] HTML Context: Triggering NEW attribute completions based on refined fallback check (substring=\'${potentialTagStart}\'). Tag found: ${tagNameFromRegex}`);
+                        provideNewAttributeCompletions = true;
+                        provideAttributeCompletions = true; // Keep setting this for now
+                        currentTagName = tagNameFromRegex;
+                    } else {
+                        // Update log message to reflect the new regex pattern
+                        log('debug', `[onCompletion] HTML Context: Refined fallback check: Substring '${potentialTagStart}' did not match /^<([a-zA-Z0-9-]+)\\s/`);
+                    }
                 } else {
-                    log('debug', '[onCompletion] HTML Context: Fallback check did not find preceding tag.');
+                     log('debug', `[onCompletion] HTML Context: Refined fallback check: No '<' found before cursor.`);
                 }
             }
 
-            log('debug', `[onCompletion] HTML Context Flags: provideElements=${provideElementCompletions}, provideAttributes=${provideAttributeCompletions}, currentTagName=${currentTagName}`);
+            log('debug', `[onCompletion] HTML Context Flags: provideElements=${provideElementCompletions}, provideAttributes=${provideAttributeCompletions}, provideNewAttributes=${provideNewAttributeCompletions}, currentTagName=${currentTagName}`);
 
             // --- Generate Completions Based on Context ---
             if (provideElementCompletions) {
@@ -277,7 +297,8 @@ export function handleCompletionRequest(
                 });
             }
 
-            if (provideAttributeCompletions) {
+            if (provideNewAttributeCompletions) {
+                log('debug', `[onCompletion] Providing NEW Attribute/Bindable completions. Project components count: ${aureliaProjectComponents.size}`);
                 aureliaProjectComponents.forEach((info) => {
                     if (info.type === 'attribute') {
                         htmlCompletions.push({
@@ -311,33 +332,44 @@ export function handleCompletionRequest(
                     });
                 });
 
+                // Bindables for the current tag
                 if (currentTagName) {
                     const componentInfo = aureliaProjectComponents.get(currentTagName);
                     if (componentInfo?.type === 'element' && componentInfo.bindables && Array.isArray(componentInfo.bindables)) {
-                        log('debug', `[onCompletion] Found element <${currentTagName}> with bindables: ${componentInfo.bindables.join(', ')}`);
-                        componentInfo.bindables.forEach(bindableName => {
+                        log('debug', `[onCompletion] Found element <${currentTagName}> with bindables: ${componentInfo.bindables.map(b => b.propertyName).join(', ')}`);
+                        componentInfo.bindables.forEach(bindableInfo => {
+                            // Determine the attribute name to suggest
+                            const attributeNameToSuggest = bindableInfo.attributeName ?? toKebabCase(bindableInfo.propertyName);
+                            
+                            // Suggest the base attribute name
                             htmlCompletions.push({
-                                label: bindableName,
+                                label: attributeNameToSuggest,
                                 kind: CompletionItemKind.Property,
-                                insertText: `${bindableName}="$1"`,
+                                insertText: `${attributeNameToSuggest}="$1"`,
                                 insertTextFormat: InsertTextFormat.Snippet,
-                                detail: `Bindable property for <${currentTagName}>`,
-                                sortText: `0_bindable_${bindableName}`
+                                detail: `Bindable property '${bindableInfo.propertyName}' for <${currentTagName}>`,
+                                sortText: `0_bindable_${attributeNameToSuggest}`
                             });
+                            
+                            // Suggest suffixed versions (.bind, .one-way, etc.)
                             AURELIA_BINDING_SUFFIXES.forEach(suffix => {
                                 if (suffix !== '.ref') {
                                     htmlCompletions.push({
-                                        label: `${bindableName}${suffix}`,
+                                        label: `${attributeNameToSuggest}${suffix}`,
                                         kind: CompletionItemKind.Event,
-                                        insertText: `${bindableName}${suffix}="\${1:expression}"`,
+                                        insertText: `${attributeNameToSuggest}${suffix}="\${1:expression}"`,
                                         insertTextFormat: InsertTextFormat.Snippet,
-                                        detail: `Bind ${suffix} on ${bindableName}`,
-                                        sortText: `0_bindable_${bindableName}${suffix}`
+                                        detail: `Bind ${suffix} on '${bindableInfo.propertyName}'`,
+                                        sortText: `0_bindable_${attributeNameToSuggest}${suffix}`
                                     });
                                 }
                             });
                         });
+                    } else {
+                         log('debug', `[onCompletion] Current tag <${currentTagName}> not found as element or has no bindables.`);
                     }
+                } else {
+                    log('debug', '[onCompletion] No current tag name identified for bindable completions.');
                 }
             }
         } catch (parseError) {
@@ -360,7 +392,7 @@ export function handleCompletionRequest(
         const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
 
         let virtualCompletionOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
-        
+
         log('debug', `[onCompletion] Expression context. Mapped HTML Offset ${offset} to Virtual Offset ${virtualCompletionOffset} (initial)`);
 
         // <<< Force offset for EMPTY interpolations >>>
@@ -373,7 +405,7 @@ export function handleCompletionRequest(
             virtualCompletionOffset = forcedOffset;
         }
         // <<< End Force Offset >>>
-        
+
         // Original dot trigger logic (might need refinement later if the above works)
         if (offset === activeMapping.htmlExpressionLocation.endOffset + 1 && params.context?.triggerCharacter === '.') {
             virtualCompletionOffset = activeMapping.virtualValueRange.end;
@@ -386,8 +418,8 @@ export function handleCompletionRequest(
             // +++ Log context before calling TS (Safer checks) +++
             log('debug', `[onCompletion] Attempting TS completions for virtual URI: ${docInfo.virtualUri}`);
             if (docInfo.virtualUri && virtualFiles.has(docInfo.virtualUri)) {
-                 const virtualDocEntry = virtualFiles.get(docInfo.virtualUri);
-                 if (virtualDocEntry) {
+                const virtualDocEntry = virtualFiles.get(docInfo.virtualUri);
+                if (virtualDocEntry) {
                     const virtualDocContent = virtualDocEntry.content;
                     const snippetStart = Math.max(0, virtualCompletionOffset - 10);
                     const snippetEnd = Math.min(virtualDocContent.length, virtualCompletionOffset + 10);
@@ -396,11 +428,11 @@ export function handleCompletionRequest(
                     const markedSnippet = virtualSnippet.substring(0, virtualCompletionOffset - snippetStart) + cursorMarker + virtualSnippet.substring(virtualCompletionOffset - snippetStart);
                     log('debug', `[onCompletion] Calling TS completions at: ${virtualFsPath}:${virtualCompletionOffset}`);
                     log('debug', `[onCompletion] Virtual context around offset: "...${markedSnippet}..."`);
-                 } else {
-                     log('warn', `[onCompletion] virtualFiles map has URI ${docInfo.virtualUri} but entry is missing?`);
-                 }
+                } else {
+                    log('warn', `[onCompletion] virtualFiles map has URI ${docInfo.virtualUri} but entry is missing?`);
+                }
             } else {
-                 log('warn', `[onCompletion] Cannot get virtual context: virtualUri is missing or not in virtualFiles map. virtualUri: ${docInfo.virtualUri}, Has Key: ${virtualFiles.has(docInfo.virtualUri ?? '')}`);
+                log('warn', `[onCompletion] Cannot get virtual context: virtualUri is missing or not in virtualFiles map. virtualUri: ${docInfo.virtualUri}, Has Key: ${virtualFiles.has(docInfo.virtualUri ?? '')}`);
             }
             // +++ End log context +++
 
@@ -476,6 +508,7 @@ export function handleCompletionRequest(
 
 
         const charBeforeCursor = textBeforeCursor[textBeforeCursor.length - 1]?.trim();
+        const lastTwo = textBeforeCursor[textBeforeCursor.length - 2]?.trim();
 
         if (!charBeforeCursor) {
             let addedFallbackMembers = false;
@@ -493,6 +526,35 @@ export function handleCompletionRequest(
             });
             log('debug', `[onCompletion] Added ${addedFallbackMembers ? 'some' : 'no'} missing VM members as fallbacks.`);
         }
+
+        if (lastTwo === '|' || lastTwo === '' && charBeforeCursor === '|') {
+            expressionCompletions = [];
+            log('debug', `[onCompletion] Pipe trigger detected. Offering Value Converters.`);
+            aureliaProjectComponents.forEach((component) => {
+                if (component.type === 'valueConverter') {
+                    log('debug', `  - Adding VC completion: ${component.name}`);
+                    expressionCompletions.push({
+                        label: component.name,
+                        kind: CompletionItemKind.Function, // Treat VCs like functions
+                        insertText: component.name,
+                        sortText: '1_vc_' + component.name, // Sort VCs after VM members
+                        detail: 'Value Converter',
+                        documentation: component.uri ? `Defined in: ${path.basename(URI.parse(component.uri).fsPath)}` : undefined
+                    });
+                }
+            });
+        } else {
+            const converters: string[] = [];
+            aureliaProjectComponents.forEach((component) => {
+                if (component.type === 'valueConverter') {
+                    converters.push(component.name);
+                }
+            });
+
+            expressionCompletions = expressionCompletions.filter(c => !converters.includes(c.label));
+            log('debug', `[onCompletion] Filtered out ${expressionCompletions.length} VCs from completions.`);
+        }
+        // <<< End Value Converter Completions >>>
 
         expressionCompletions.sort((a, b) => (a.sortText ?? '').localeCompare(b.sortText ?? ''));
         log('debug', `[onCompletion] Expression Context: Returning ${expressionCompletions.length} completion items after fallbacks.`);

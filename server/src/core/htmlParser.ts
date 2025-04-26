@@ -42,7 +42,7 @@ export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResu
 
                     // +++ Count preceding newlines using regex +++
                     const textBeforeMatch = textContent.substring(0, match.index);
-                    const newlineRegex = /\r\n|\r|\n/g; // Re-use the regex
+                    const newlineRegex = /(\r\n|\r|\n)\${/g; // Re-use the regex
                     const newlineMatches = textBeforeMatch.match(newlineRegex); // Use match (returns array or null)
                     const newlineCount = newlineMatches ? newlineMatches.length : 0; // Count matches
                     log('debug', `[extractExpressions]       - Preceding newlines within node before index ${match.index}: ${newlineCount} (Regex)`);

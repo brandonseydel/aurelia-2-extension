@@ -7,7 +7,7 @@ import { log } from '../utils/logger';
 import { 
     fileExistsOnDisk} from '../utils/utilities';
 // Import the shared types
-import { AureliaProjectComponentMap, AureliaComponentInfo } from '../common/types';
+import { AureliaProjectComponentMap, AureliaComponentInfo, AureliaBindableInfo } from '../common/types';
 
 // Track component dependencies to manage updates when files change
 interface ComponentDependencies {
@@ -41,10 +41,14 @@ interface ScanResult {
 }
 
 /**
- * Extract bindable properties from a class declaration
+ * Extract bindable properties from a class declaration, 
+ * including explicit attribute names from decorators.
  */
-function getBindablePropertiesFromClassNode(classNode: ts.ClassDeclaration, sourceFile: ts.SourceFile): string[] {
-    const bindables: string[] = [];
+function getBindablePropertiesFromClassNode(
+    classNode: ts.ClassDeclaration, 
+    sourceFile: ts.SourceFile
+): AureliaBindableInfo[] { // Return new structure
+    const bindables: AureliaBindableInfo[] = [];
     
     try {
         // Get class members
@@ -56,15 +60,49 @@ function getBindablePropertiesFromClassNode(classNode: ts.ClassDeclaration, sour
             // Look for property declarations
             if (ts.isPropertyDeclaration(member) && member.name) {
                 const propertyName = member.name.getText(sourceFile);
+                let attributeName: string | undefined = undefined; // Variable to hold explicit attribute name
                 
                 // Check for @bindable decorator
                 const decorators = ts.getDecorators(member);
                 if (decorators && decorators.length > 0) {
                     for (const decorator of decorators) {
-                        const decoratorName = decorator.expression.getText(sourceFile);
-                        if (decoratorName.startsWith('bindable') || decoratorName.startsWith('@bindable')) {
-                            bindables.push(propertyName);
-                            break;
+                        const decoratorExpr = decorator.expression;
+                        let isBindableDecorator = false;
+
+                        // Check if it's the bindable decorator (either @bindable or @bindable(...))
+                        if (ts.isCallExpression(decoratorExpr) && ts.isIdentifier(decoratorExpr.expression)) {
+                            isBindableDecorator = decoratorExpr.expression.getText(sourceFile) === 'bindable';
+                        } else if (ts.isIdentifier(decoratorExpr)) {
+                            isBindableDecorator = decoratorExpr.getText(sourceFile) === 'bindable';
+                        }
+
+                        if (isBindableDecorator) {
+                             // It is a bindable decorator, now check arguments for explicit name
+                            if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                                const firstArgument = decoratorExpr.arguments[0];
+                                // Case 1: @bindable('my-attribute')
+                                if (ts.isStringLiteral(firstArgument)) {
+                                    attributeName = firstArgument.text;
+                                }
+                                // Case 2: @bindable({ attribute: 'my-attribute' })
+                                else if (ts.isObjectLiteralExpression(firstArgument)) {
+                                    for (const prop of firstArgument.properties) {
+                                        if (
+                                            ts.isPropertyAssignment(prop) && 
+                                            ts.isIdentifier(prop.name) && 
+                                            prop.name.text === 'attribute' && // Check for 'attribute' property
+                                            ts.isStringLiteral(prop.initializer)
+                                        ) {
+                                            attributeName = prop.initializer.text;
+                                            break; // Found the attribute property
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Add to results including the optional attribute name
+                            bindables.push({ propertyName, attributeName });
+                            break; // Found @bindable, move to next member
                         }
                     }
                 }
@@ -74,14 +112,15 @@ function getBindablePropertiesFromClassNode(classNode: ts.ClassDeclaration, sour
         return bindables;
     } catch (e) {
         log('error', `[getBindablePropertiesFromClassNode] Error extracting bindables: ${e}`);
-        return bindables;
+        return bindables; // Return empty on error
     }
 }
 
 /**
  * Convert a string from PascalCase to kebab-case
  */
-function toKebabCase(str: string): string {
+export function toKebabCase(str: string): string {
+    if (!str) return '';
     return str.replace(/([a-z0-9])([A-Z])/g, '$1-$2')
               .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
               .toLowerCase();
@@ -356,7 +395,9 @@ export function scanWorkspaceForAureliaComponents(
                                     // Register component file
                                     registerComponentFile(fileUri, sourceFile.fileName);
 
-                                    log('info', `[scanWorkspace] --> Found Element: ${elementName} (Bindables: ${bindables.join(', ')}) in ${sourceFile.fileName}`);
+                                    // Update log to show property names
+                                    const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                                    log('info', `[scanWorkspace] --> Found Element: ${elementName} (Bindables: ${bindablePropNames || 'None'}) in ${sourceFile.fileName}`);
                                 }
                                 break;
                             }
@@ -382,7 +423,7 @@ export function scanWorkspaceForAureliaComponents(
                                 attributeName = attributeName ?? toKebabCase(className);
 
                                  if (attributeName && !foundComponents.has(attributeName)) {
-                                    const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                                    const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
                                     const componentInfo: AureliaComponentInfo = { 
                                         uri: fileUri, 
                                         type: 'attribute', 
@@ -396,14 +437,65 @@ export function scanWorkspaceForAureliaComponents(
                                     // Register component file
                                     registerComponentFile(fileUri, sourceFile.fileName);
                                     
-                                    log('info', `[scanWorkspace] --> Found Attribute: ${attributeName} (Bindables: ${bindables.join(', ')}) in ${sourceFile.fileName}`);
+                                    // Update log to show property names
+                                    const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                                    log('info', `[scanWorkspace] --> Found Attribute: ${attributeName} (Bindables: ${bindablePropNames || 'None'}) in ${sourceFile.fileName}`);
                                  }
                                  break;
+                            }
+                            if (decoratorName === 'valueConverter') {
+                                isExplicitlyDecorated = true;
+                                let converterName: string | undefined;
+                                if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                                    const firstArgument = decoratorExpr.arguments[0];
+                                    if (ts.isStringLiteral(firstArgument)) {
+                                        converterName = firstArgument.text;
+                                    } 
+                                }
+                                // Fallback to convention: MyFormatValueConverter -> myFormat
+                                if (!converterName && className.endsWith('ValueConverter')) {
+                                     const baseName = className.substring(0, className.length - 'ValueConverter'.length);
+                                     converterName = toKebabCase(baseName);
+                                }
+
+                                 if (converterName && !foundComponents.has(converterName)) {
+                                    const componentInfo: AureliaComponentInfo = { 
+                                        uri: fileUri, 
+                                        type: 'valueConverter', 
+                                        name: converterName,
+                                        bindables: [], // Value converters don't have bindables
+                                        className: className, 
+                                        sourceFile: sourceFile.fileName 
+                                    };
+                                    foundComponents.set(converterName, componentInfo);
+                                    registerComponentFile(fileUri, sourceFile.fileName); // Register file
+                                    log('info', `[scanWorkspace] --> Found Value Converter: ${converterName} in ${sourceFile.fileName}`);
+                                 }
+                                 break; // Found the relevant Aurelia decorator
                             }
                         }
                     }
 
-                    if (!isExplicitlyDecorated) {
+                    // <<< Check for implicit Value Converter by convention >>>
+                    if (!isExplicitlyDecorated && className.endsWith('ValueConverter')) {
+                        const baseName = className.substring(0, className.length - 'ValueConverter'.length);
+                        const converterName = toKebabCase(baseName);
+                        if (converterName && !foundComponents.has(converterName)) {
+                             const componentInfo: AureliaComponentInfo = { 
+                                uri: fileUri, 
+                                type: 'valueConverter', 
+                                name: converterName,
+                                bindables: [], 
+                                className: className, 
+                                sourceFile: sourceFile.fileName 
+                            };
+                            foundComponents.set(converterName, componentInfo);
+                            registerComponentFile(fileUri, sourceFile.fileName); // Register file
+                            log('info', `[scanWorkspace] --> Found Implicit Value Converter: ${converterName} (from class ${className}) in ${sourceFile.fileName}`);
+                        }
+                    } 
+                    // <<< Check for implicit Custom Element by convention >>>
+                    else if (!isExplicitlyDecorated) { // Note: added 'else if' to avoid double-detecting if naming conflicts
                         const tsFilePath = sourceFile.fileName;
                         const dirName = path.dirname(tsFilePath);
                         const baseName = path.basename(tsFilePath, ".ts");
@@ -413,7 +505,7 @@ export function scanWorkspaceForAureliaComponents(
                         if (fileExistsOnDisk(expectedHtmlPath)) {
                             const implicitElementName = toKebabCase(className);
                             if (implicitElementName && !foundComponents.has(implicitElementName)) {
-                                const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                                const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
                                 const componentInfo: AureliaComponentInfo = { 
                                     uri: fileUri, 
                                     type: 'element', 
@@ -424,11 +516,13 @@ export function scanWorkspaceForAureliaComponents(
                                 };
                                 foundComponents.set(implicitElementName, componentInfo);
                                 
-                                // Register component file
+                                // Register component files
                                 registerComponentFile(fileUri, sourceFile.fileName);
                                 registerComponentFile(fileUri, expectedHtmlPath);
                                 
-                                log('info', `[scanWorkspace] --> Found Implicit Element: ${implicitElementName} (Bindables: ${bindables.join(', ')}) (via class ${className} + ${expectedHtmlFileName})`);
+                                // Update log to show property names
+                                const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                                log('info', `[scanWorkspace] --> Found Implicit Element: ${implicitElementName} (Bindables: ${bindablePropNames || 'None'}) (via class ${className} + ${expectedHtmlFileName})`);
                             }
                         }
                     }
@@ -525,6 +619,7 @@ export function updateComponentInfoForFile(
             if (!className) return;
             log('debug', `  - Found class: ${className}`);
             const decorators = ts.getDecorators(node);
+            let decoratedAsAureliaComponent = false;
 
             if (decorators && decorators.length > 0) {
                 for (const decorator of decorators) {
@@ -540,6 +635,7 @@ export function updateComponentInfoForFile(
                     }
 
                     if (decoratorName === 'customElement') {
+                        decoratedAsAureliaComponent = true;
                         let elementName: string | undefined;
                         if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
                             const firstArgument = decoratorExpr.arguments[0];
@@ -572,7 +668,7 @@ export function updateComponentInfoForFile(
                             existingComponents.delete(elementName);
                             
                             // Add/update component
-                            const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                            const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
                             const componentInfo: AureliaComponentInfo = { 
                                 uri: fileUri, 
                                 type: 'element', 
@@ -586,11 +682,14 @@ export function updateComponentInfoForFile(
                             // Register component file
                             registerComponentFile(fileUri, filePath);
                             
-                            log('info', `[File Watch] Updated/Added Element: ${elementName} (Bindables: ${bindables.join(', ')}) from ${filePath}`);
+                            // Update log
+                            const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                            log('info', `[File Watch] Updated/Added Element: ${elementName} (Bindables: ${bindablePropNames || 'None'}) from ${filePath}`);
                         }
                         break;
                     }
                     if (decoratorName === 'customAttribute') {
+                        decoratedAsAureliaComponent = true;
                         let attributeName: string | undefined;
                          if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
                             const firstArgument = decoratorExpr.arguments[0];
@@ -623,7 +722,7 @@ export function updateComponentInfoForFile(
                              existingComponents.delete(attributeName);
                              
                              // Add/update component
-                             const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                             const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
                              const componentInfo: AureliaComponentInfo = { 
                                 uri: fileUri, 
                                 type: 'attribute', 
@@ -637,16 +736,78 @@ export function updateComponentInfoForFile(
                              // Register component file
                              registerComponentFile(fileUri, filePath);
                              
-                             log('info', `[File Watch] Updated/Added Attribute: ${attributeName} from ${filePath}`);
+                             // Update log
+                             const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                             log('info', `[File Watch] Updated/Added Attribute: ${attributeName} (Bindables: ${bindablePropNames || 'None'}) from ${filePath}`);
                              
                              // Mark as changed
                              mapChanged = true;
                          }
                          break;
                     }
+                    if (decoratorName === 'valueConverter') {
+                         decoratedAsAureliaComponent = true;
+                         let converterName: string | undefined;
+                         if (ts.isCallExpression(decoratorExpr) && decoratorExpr.arguments.length > 0) {
+                            const firstArgument = decoratorExpr.arguments[0];
+                             if (ts.isStringLiteral(firstArgument)) {
+                                 converterName = firstArgument.text;
+                            } 
+                         }
+                         // Fallback to convention: MyFormatValueConverter -> myFormat
+                         if (!converterName && className.endsWith('ValueConverter')) {
+                              const baseName = className.substring(0, className.length - 'ValueConverter'.length);
+                              converterName = toKebabCase(baseName);
+                         }
+ 
+                          if (converterName) { // Check if a name was determined
+                             componentFound = true;
+                             const existingComponent = aureliaProjectComponents.get(converterName);
+                             if (!existingComponent || existingComponent.uri !== fileUri) {
+                                mapChanged = true;
+                            }
+                            existingComponents.delete(converterName); // Remove from existing list for this file
+
+                             const componentInfo: AureliaComponentInfo = { 
+                                 uri: fileUri, 
+                                 type: 'valueConverter', 
+                                 name: converterName,
+                                 bindables: [], // Keep as empty array
+                                 className: className, 
+                                 sourceFile: filePath 
+                             };
+                             aureliaProjectComponents.set(converterName, componentInfo);
+                             registerComponentFile(fileUri, filePath); 
+                             log('info', `[File Watch] Updated/Added Value Converter: ${converterName} from ${filePath}`);
+                             mapChanged = true; // Ensure mapChanged is true if added/updated
+                          }
+                          break; // Found the relevant Aurelia decorator
+                     }
                 }
-            } else {
-                // Check for implicit components (TS file + HTML file)
+            }
+             // <<< Add implicit Value Converter Check >>>
+             if (!decoratedAsAureliaComponent && className.endsWith('ValueConverter')) {
+                const baseName = className.substring(0, className.length - 'ValueConverter'.length);
+                const converterName = toKebabCase(baseName);
+                 if (converterName) {
+                    componentFound = true;
+                    const existingComponent = aureliaProjectComponents.get(converterName);
+                    if (!existingComponent || existingComponent.uri !== fileUri) {
+                        mapChanged = true;
+                    }
+                    existingComponents.delete(converterName); 
+                    const componentInfo: AureliaComponentInfo = { 
+                        uri: fileUri, type: 'valueConverter', name: converterName,
+                        bindables: [], className: className, sourceFile: filePath // Keep bindables empty
+                    };
+                    aureliaProjectComponents.set(converterName, componentInfo);
+                    registerComponentFile(fileUri, filePath); 
+                    log('info', `[File Watch] Updated/Added Implicit Value Converter: ${converterName} from ${filePath}`);
+                    mapChanged = true; 
+                }
+             } 
+             // <<< Check for implicit elements only if not an implicit VC >>>
+             else if (!decoratedAsAureliaComponent) { 
                 const dirName = path.dirname(filePath);
                 const baseName = path.basename(filePath, ".ts");
                 const expectedHtmlFileName = `${toKebabCase(baseName)}.html`;
@@ -667,7 +828,7 @@ export function updateComponentInfoForFile(
                         existingComponents.delete(implicitElementName);
                         
                         // Add/update component
-                        const bindables = getBindablePropertiesFromClassNode(node, sourceFile); 
+                        const bindables = getBindablePropertiesFromClassNode(node, sourceFile);
                         const componentInfo: AureliaComponentInfo = { 
                             uri: fileUri, 
                             type: 'element', 
@@ -682,7 +843,9 @@ export function updateComponentInfoForFile(
                         registerComponentFile(fileUri, filePath);
                         registerComponentFile(fileUri, expectedHtmlPath);
                         
-                        log('info', `[File Watch] Updated/Added Implicit Element: ${implicitElementName} (via class ${className} + ${expectedHtmlFileName})`);
+                        // Update log
+                        const bindablePropNames = bindables.map(b => b.propertyName).join(', ');
+                        log('info', `[File Watch] Updated/Added Implicit Element: ${implicitElementName} (Bindables: ${bindablePropNames || 'None'}) (via class ${className} + ${expectedHtmlFileName})`);
                         
                         // Mark as changed
                         mapChanged = true;
@@ -723,35 +886,3 @@ export function updateComponentInfoForFile(
 
     return mapChanged;
 }
-
-// // Scans a TypeScript file content to find Aurelia component declarations.
-// export function scanFileForComponents(filePath: string, fileContent: string): ScanResult {
-//    ...
-// }
-
-// // Helper to find @bindable properties within a class
-// function findBindablesInClass(classNode: ts.ClassDeclaration, sourceFile: ts.SourceFile): string[] {
-//    ...
-// }
-
-// // Converts PascalCase or camelCase className to kebab-case html tag/attribute name
-// function classNameToHtml(className: string): string {
-//     ...
-// }
-
-// // Scans project files based on include/exclude patterns to find Aurelia components.
-// export function scanProjectForComponents(
-//     program: ts.Program,
-//     filePaths: string[] 
-// ): AureliaProjectComponentMap { // Use imported type
-//    ...
-// }
-
-// // Example function signature if updating an existing map
-// export function updateComponentMapFromFile(
-//     filePath: string, 
-//     fileContent: string, 
-//     componentMap: AureliaProjectComponentMap // Use imported type
-// ): void {
-//    ...
-// } 

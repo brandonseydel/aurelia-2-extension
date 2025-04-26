@@ -3,7 +3,7 @@ import * as path from 'path';
 import { URI } from 'vscode-uri';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Diagnostic, Connection, TextDocuments } from 'vscode-languageserver/node';
-import { AureliaDocumentInfo, DetailedMapping } from '../common/types';
+import { AureliaDocumentInfo, AureliaProjectComponentMap, DetailedMapping } from '../common/types';
 import { log } from '../utils/logger';
 import { kebabToPascalCase, fileExistsOnDisk } from '../utils/utilities';
 import { extractExpressionsFromHtml } from './htmlParser';
@@ -109,7 +109,8 @@ export function updateVirtualFile(
     languageService: ts.LanguageService,
     documents: TextDocuments<TextDocument>,
     connection: Connection,
-    viewModelMembersCache: ViewModelMembersCache // <<< Add cache parameter
+    viewModelMembersCache: ViewModelMembersCache,
+    aureliaProjectComponentMap: AureliaProjectComponentMap
 ): boolean {
     const htmlFsPath = URI.parse(htmlUri).fsPath;
     const dirName = path.dirname(htmlFsPath);
@@ -173,45 +174,72 @@ export function updateVirtualFile(
     virtualContent += `declare const _this: ${vmClassName};\n\n`;
     virtualContent += `// --- Expression Placeholders ---\n`;
 
+    // <<< Identify VCs used in this specific HTML file >>>
+    const usedValueConverterNames = new Set<string>();
+    expressions.forEach(expr => {
+        const pipeParts = expr.expression.split('|').map(p => p.trim());
+        if (pipeParts.length > 1) {
+            for (let i = 1; i < pipeParts.length; i++) {
+                const vcPart = pipeParts[i];
+                const vcName = vcPart.split(':')[0].trim(); // Get only the name before the first colon
+                if (vcName && aureliaProjectComponentMap.has(vcName)) {
+                    usedValueConverterNames.add(vcName);
+                }
+            }
+        }
+    });
+
+    // <<< Add Declarations ONLY for USED VCs (No Underscore) >>>
+    virtualContent += `// --- VC Placeholders (Used in this file) ---\n`;
+    usedValueConverterNames.forEach(vcName => {
+        // Basic placeholder
+        virtualContent += `declare function ${vcName}(value: any, ...args: any[]): any;\n`;
+    });
+    virtualContent += `// --- End VC Placeholders ---\n\n`;
+
     const detailedMappings: DetailedMapping[] = [];
     let currentOffset = virtualContent.length;
 
     expressions.forEach((expr, index) => {
         const placeholderVarName = `___expr_${index + 1}`;
-        let transformedExpression = expr.expression;
-        const originalHtmlExprOffset = expr.htmlLocation.startOffset;
+        // <<< Keep original expression for VC part, transform base >>>
+        let baseExpression = expr.expression;
+        const pipeParts = expr.expression.split('|').map(p => p.trim());
+        let pipeSuffix = ''; // The part from the first pipe onwards
+        if (pipeParts.length > 1) {
+            baseExpression = pipeParts[0];
+            pipeSuffix = ' | ' + pipeParts.slice(1).join(' | '); // Reconstruct the pipe part
+        }
 
-        // +++ Define a temporary type for storing intermediate calculation +++
         type TransformationWithTemp = DetailedMapping['transformations'][0] & { originalVirtualStart: number };
-        let currentExpressionTransformsTemp: TransformationWithTemp[] = []; // Use temporary type
+        let currentExpressionTransformsTemp: TransformationWithTemp[] = [];
         let currentVirtualExprContent = '';
 
-        // Perform transformation and record details
-        const trimmedOriginal = expr.expression.trim();
-        if (trimmedOriginal === "") {
-            currentVirtualExprContent = "_this";
+        // Perform transformation ONLY on the baseExpression
+        const trimmedBase = baseExpression.trim();
+        if (trimmedBase === "") {
+            currentVirtualExprContent = "_this"; // Or perhaps just empty string?
         } else {
-            // +++ Use matchAll for potentially more robust iteration +++
             const identifierRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
             let currentIndex = 0;
             let result = '';
-            let transformationIndex = 0; // Keep track of transformation index for detailed mapping
-            for (const match of expr.expression.matchAll(identifierRegex)) {
+            for (const match of baseExpression.matchAll(identifierRegex)) {
                 const capturedIdentifier = match[1];
                 const matchIndex = match.index ?? 0;
-                result += expr.expression.substring(currentIndex, matchIndex);
+                result += baseExpression.substring(currentIndex, matchIndex);
                 let replacement = match[0];
                 let offsetDelta = 0;
                 if (capturedIdentifier !== 'this' && memberNames.includes(capturedIdentifier) && !['true', 'false', 'null', 'undefined'].includes(capturedIdentifier)) {
                     const transformed = `_this.${capturedIdentifier}`;
                     replacement = transformed;
-                    offsetDelta = 6; // Length of "_this."
-                    const htmlStart = originalHtmlExprOffset + matchIndex;
+                    offsetDelta = 6;
+                    const baseExprHtmlOffset = expr.expression.indexOf(baseExpression);
+                    const htmlStart = expr.htmlLocation.startOffset + baseExprHtmlOffset + matchIndex;
                     const htmlEnd = htmlStart + capturedIdentifier.length;
                     const virtualValueRelativeStart = result.length;
                     currentExpressionTransformsTemp.push({
                         htmlRange: { start: htmlStart, end: htmlEnd },
-                        virtualRange: { start: -1, end: -1 }, // Placeholder, calculated later
+                        virtualRange: { start: -1, end: -1 },
                         offsetDelta: offsetDelta,
                         originalVirtualStart: virtualValueRelativeStart
                     });
@@ -219,22 +247,27 @@ export function updateVirtualFile(
                 result += replacement;
                 currentIndex = matchIndex + match[0].length;
             }
-            result += expr.expression.substring(currentIndex);
+            result += baseExpression.substring(currentIndex);
             currentVirtualExprContent = result;
-            // +++ End matchAll change +++
         }
 
-        // Construct line and calculate ranges, ADDING the comment
+        // <<< Combine transformed base with UNMODIFIED pipe suffix >>>
+        let finalVirtualExprContent = currentVirtualExprContent;
+        if (pipeSuffix) {
+            finalVirtualExprContent += pipeSuffix; // <<< Add original suffix back >>>
+        }
+
+        // Construct line and calculate ranges
         const linePrefix = `const ${placeholderVarName} = (`;
         const lineSuffix = `); // Origin: ${expr.type}\n`;
-        const lineContent = linePrefix + currentVirtualExprContent + lineSuffix;
-        
-        const virtualBlockStart = currentOffset; // Block starts with the comment now
-        const virtualValueStart = virtualBlockStart + linePrefix.length; // Value starts after comment and prefix
-        const virtualValueEnd = virtualValueStart + currentVirtualExprContent.length;
-        const virtualBlockEnd = virtualBlockStart + lineContent.length; // Block ends after suffix
+        const lineContent = linePrefix + finalVirtualExprContent + lineSuffix;
 
-        // Calculate final absolute virtual ranges for transformations
+        const virtualBlockStart = currentOffset;
+        const virtualValueStart = virtualBlockStart + linePrefix.length;
+        const virtualValueEnd = virtualValueStart + finalVirtualExprContent.length;
+        const virtualBlockEnd = virtualBlockStart + lineContent.length;
+
+        // Calculate final absolute virtual ranges for transformations (still only for base expression)
         const finalTransformations: DetailedMapping['transformations'] = currentExpressionTransformsTemp.map(t => {
             const transformedLength = (t.htmlRange.end - t.htmlRange.start) + t.offsetDelta;
             const finalVirtualStart = virtualValueStart + t.originalVirtualStart; // Use adjusted virtualValueStart
@@ -320,10 +353,10 @@ export function mapHtmlOffsetToVirtual(offset: number, mapping: DetailedMapping)
     // This handles the <tag>${|} case, pushing it from virtualStart to virtualStart + 1
     // to match the behavior of the newline case which triggers at htmlStart + 1.
     if (mapping.type === 'interpolation' && offset === mapping.htmlExpressionLocation.startOffset) {
-         if (calculatedVirtualOffset < mapping.virtualValueRange.end) {
-             calculatedVirtualOffset += 1;
-             log('debug', `[mapHtmlOffsetToVirtual] Nudging virtual offset for exact interpolation start from ${calculatedVirtualOffset-1} to ${calculatedVirtualOffset}`);
-         }
+        if (calculatedVirtualOffset < mapping.virtualValueRange.end) {
+            calculatedVirtualOffset += 1;
+            log('debug', `[mapHtmlOffsetToVirtual] Nudging virtual offset for exact interpolation start from ${calculatedVirtualOffset - 1} to ${calculatedVirtualOffset}`);
+        }
     }
     // +++ End Nudge +++
 

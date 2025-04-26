@@ -110,14 +110,14 @@ connection.onInitialize((params: InitializeParams) => {
         legend: semanticTokensLegend,
         full: true,
       },
-      referencesProvider: true,      
-      workspace: { 
+      referencesProvider: true,
+      workspace: {
         workspaceFolders: {
           supported: true,
           changeNotifications: true
         }
       }
-    },    
+    },
   };
 
   return result;
@@ -130,10 +130,10 @@ connection.onInitialized(() => {
     watchers: [
       {
         // Construct RelativePattern object directly
-        globPattern: { 
-          baseUri: URI.file(workspaceRoot).toString(), 
-          pattern: '**/*.ts' 
-        }, 
+        globPattern: {
+          baseUri: URI.file(workspaceRoot).toString(),
+          pattern: '**/*.ts'
+        },
         kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete
       }
     ]
@@ -152,54 +152,56 @@ documents.onDidChangeContent((change) => {
 
   if (uri.endsWith('.html')) {
     // +++ Proactively invalidate cache for the ASSOCIATED ViewModel +++
-    const docInfo = aureliaDocuments.get(htmlUriString); 
+    const docInfo = aureliaDocuments.get(htmlUriString);
     if (docInfo && docInfo.vmFsPath) {
-        log('info', `[onDidChangeContent] HTML file ${uri} changed. Proactively invalidating cache for VM: ${docInfo.vmFsPath}`);
-        viewModelMembersCache.delete(docInfo.vmFsPath);
+      log('info', `[onDidChangeContent] HTML file ${uri} changed. Proactively invalidating cache for VM: ${docInfo.vmFsPath}`);
+      viewModelMembersCache.delete(docInfo.vmFsPath);
     }
     // +++ END Invalidate Cache +++
 
     // Now update the virtual file (it will refetch members if cache was invalidated)
     updateVirtualFile(
-        htmlUriString, 
-        change.document.getText(),
-        aureliaDocuments,      
-        virtualFiles,          
-        languageService,       
-        documents,             
-        connection,
-        viewModelMembersCache 
-    ); 
+      htmlUriString,
+      change.document.getText(),
+      aureliaDocuments,
+      virtualFiles,
+      languageService,
+      documents,
+      connection,
+      viewModelMembersCache,
+      aureliaProjectComponents,
+    );
   } else if (uri.endsWith('.ts')) {
     // Invalidate cache DIRECTLY when the TS file changes (Keep this)
     log('info', `[onDidChangeContent] ViewModel ${uri} changed. Invalidating cache for ${fsPath}`);
     viewModelMembersCache.delete(fsPath);
-    
+
     // Find open HTML documents associated with this TS file and update them
     for (const [htmlUriKey, relatedDocInfo] of aureliaDocuments.entries()) {
-        if (relatedDocInfo.vmFsPath === fsPath) {
-            const htmlDoc = documents.get(htmlUriKey); 
-            if (htmlDoc) {
-                log('info', `[onDidChangeContent] Triggering virtual file update for OPEN document: ${htmlUriKey}`);
-                // Delay might still be useful here, keeping it for now
-                setTimeout(() => {
-                    const currentHtmlDoc = documents.get(htmlUriKey); 
-                    if (currentHtmlDoc) {
-                         log('info', `[onDidChangeContent][Delayed] Updating virtual file for ${htmlUriKey} after TS change.`);
-                         updateVirtualFile(
-                            currentHtmlDoc.uri, 
-                            currentHtmlDoc.getText(),
-                            aureliaDocuments, 
-                            virtualFiles, 
-                            languageService, 
-                            documents,         
-                            connection,
-                            viewModelMembersCache 
-                        );
-                    }
-                }, 500); 
+      if (relatedDocInfo.vmFsPath === fsPath) {
+        const htmlDoc = documents.get(htmlUriKey);
+        if (htmlDoc) {
+          log('info', `[onDidChangeContent] Triggering virtual file update for OPEN document: ${htmlUriKey}`);
+          // Delay might still be useful here, keeping it for now
+          setTimeout(() => {
+            const currentHtmlDoc = documents.get(htmlUriKey);
+            if (currentHtmlDoc) {
+              log('info', `[onDidChangeContent][Delayed] Updating virtual file for ${htmlUriKey} after TS change.`);
+              updateVirtualFile(
+                currentHtmlDoc.uri,
+                currentHtmlDoc.getText(),
+                aureliaDocuments,
+                virtualFiles,
+                languageService,
+                documents,
+                connection,
+                viewModelMembersCache,
+                aureliaProjectComponents
+              );
             }
+          }, 500);
         }
+      }
     }
   }
 });
@@ -302,7 +304,8 @@ connection.onDidChangeWatchedFiles((params) => {
                   languageService,
                   documents,
                   connection,
-                  viewModelMembersCache
+                  viewModelMembersCache,
+                  aureliaProjectComponents
                 );
               } else {
                 log('debug', `[File Watch Debounce] Watched ViewModel ${changedFsPath} changed, but associated HTML doc ${htmlUriKey} is not open. Virtual file will update on open.`);
@@ -334,7 +337,7 @@ connection.onDidChangeWatchedFiles((params) => {
       else if (anyComponentMapChanged) { // <<< Check the flag after processing all files
         log('info', '[File Watch Debounce] Component map was updated. Requesting semantic token refresh.');
         // Request the client to refresh semantic tokens
-        connection.languages.semanticTokens.refresh(); 
+        connection.languages.semanticTokens.refresh();
       }
 
     }, COMPONENT_UPDATE_DEBOUNCE_MS);
@@ -420,7 +423,7 @@ connection.onRenameRequest(async (params: RenameParams): Promise<WorkspaceEdit |
     documents,
     aureliaDocuments,
     languageService,
-    viewModelMembersCache
+    aureliaProjectComponents
   );
 });
 
