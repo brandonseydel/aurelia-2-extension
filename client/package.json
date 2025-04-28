@@ -15,7 +15,8 @@
     "vscode": "^1.66.0"
   },
   "activationEvents": [
-    "onLanguage:html"
+    "onLanguage:html",
+    "onLanguage:typescript"
   ],
   "main": "./out/extension.js",
   "scripts": {
@@ -51,6 +52,22 @@
       {
         "command": "aurelia.gotoCustomElement",
         "title": "Aurelia: Go to Custom Element Definition"
+      },
+      {
+        "command": "aurelia.makeElementExplicit",
+        "title": "Aurelia: Make Custom Element Name Explicit"
+      },
+      {
+        "command": "aurelia.makeElementImplicit",
+        "title": "Aurelia: Make Custom Element Name Implicit"
+      },
+      {
+        "command": "aurelia.makeFolderExplicit",
+        "title": "Aurelia: Make All Elements Explicit in Folder"
+      },
+      {
+        "command": "aurelia.makeFolderImplicit",
+        "title": "Aurelia: Make All Elements Implicit in Folder"
       }
     ],
     "grammars": [
@@ -138,6 +155,28 @@
           "command": "aurelia.gotoCustomElement",
           "when": "editorLangId == html && aurelia:isAureliaProject && aurelia:hasPairedTs",
           "group": "navigation@1"
+        },
+        {
+          "command": "aurelia.makeElementExplicit",
+          "when": "editorLangId == typescript && aurelia:isAureliaProject && aurelia:hasPairedHtml && aurelia:tsFileCanBeExplicitCE",
+          "group": "navigation@2"
+        },
+        {
+          "command": "aurelia.makeElementImplicit",
+          "when": "editorLangId == typescript && aurelia:isAureliaProject && aurelia:hasPairedHtml && aurelia:tsFileHasExplicitCE",
+          "group": "navigation@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "aurelia.makeFolderExplicit",
+          "when": "explorerResourceIsFolder && aurelia:isAureliaProject",
+          "group": "aurelia@1"
+        },
+        {
+          "command": "aurelia.makeFolderImplicit",
+          "when": "explorerResourceIsFolder && aurelia:isAureliaProject",
+          "group": "aurelia@1"
         }
       ]
     }

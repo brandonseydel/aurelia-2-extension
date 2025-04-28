@@ -40,7 +40,8 @@ export function updateDiagnostics(
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
     languageService: ts.LanguageService,
     connection: Connection,
-    aureliaProjectComponents: AureliaProjectComponentMap
+    aureliaProjectComponents: AureliaProjectComponentMap,
+    program: ts.Program | undefined
 ): void { 
     if (!serverSettings.diagnostics.enable) {
         log('debug', '[updateDiagnostics] Diagnostics disabled via settings.');
@@ -137,7 +138,7 @@ export function updateDiagnostics(
     }
 
     // +++ START: Custom Aurelia Bindable Type Checking +++
-    const typeChecker = languageService.getProgram()?.getTypeChecker();
+    const typeChecker = (program ?? languageService.getProgram())?.getTypeChecker();
     if (typeChecker && docInfo.vmFsPath) { // Ensure we have a type checker and view model context
         log('info', `[updateDiagnostics] Performing custom bindable type checks for ${htmlUriString}`);
         

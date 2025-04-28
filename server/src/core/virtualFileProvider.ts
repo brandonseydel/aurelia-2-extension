@@ -369,7 +369,8 @@ export function updateVirtualFile(
         aureliaDocuments,
         languageService,
         connection,
-        aureliaProjectComponentMap
+        aureliaProjectComponentMap,
+        program
     ),
     );
     // to ensure it runs after the current event loop tick.
