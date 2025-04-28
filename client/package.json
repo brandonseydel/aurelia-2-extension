@@ -131,13 +131,13 @@
       "editor/context": [
         {
           "command": "aurelia.gotoHtml",
-          "when": "editorLangId == typescript",
-          "group": "navigation"
+          "when": "editorLangId == typescript && aurelia:isAureliaProject && aurelia:hasPairedHtml",
+          "group": "navigation@1"
         },
         {
           "command": "aurelia.gotoCustomElement",
-          "when": "editorLangId == html",
-          "group": "navigation"
+          "when": "editorLangId == html && aurelia:isAureliaProject && aurelia:hasPairedTs",
+          "group": "navigation@1"
         }
       ]
     }

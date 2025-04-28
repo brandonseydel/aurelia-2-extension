@@ -37,6 +37,7 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const path = __importStar(require("path"));
 const vscode_1 = require("vscode");
+const fs = __importStar(require("fs")); // Import fs for reading package.json
 const node_1 = require("vscode-languageclient/node");
 let client;
 // Helper function to convert kebab-case to PascalCase
@@ -144,6 +145,125 @@ function activate(context) {
         }
     });
     context.subscriptions.push(goToHtmlCommand, goToCustomElementCommand);
+    // --- Context Key Management --- 
+    let isAureliaProject = undefined; // Cache the result
+    let rootPackageJsonWatcher;
+    let pairedFileWatcher;
+    async function checkIsAureliaProject() {
+        if (isAureliaProject !== undefined)
+            return isAureliaProject;
+        console.log('info', '[Context] Checking if workspace is an Aurelia project...');
+        isAureliaProject = false; // Default
+        const workspaceFolders = vscode_1.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            const rootPath = workspaceFolders[0].uri.fsPath;
+            const packageJsonPath = path.join(rootPath, 'package.json');
+            try {
+                if (fs.existsSync(packageJsonPath)) {
+                    const packageJsonContent = await fs.promises.readFile(packageJsonPath, 'utf-8');
+                    const packageJson = JSON.parse(packageJsonContent);
+                    const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                    for (const dep in dependencies) {
+                        if (dep.startsWith('@aurelia')) {
+                            isAureliaProject = true;
+                            console.log('info', '[Context] Aurelia project detected (found @aurelia dependency).');
+                            break;
+                        }
+                    }
+                }
+                else {
+                    console.log('warn', '[Context] Root package.json not found.');
+                }
+            }
+            catch (error) {
+                console.error('[Context] Error reading or parsing root package.json:', error);
+            }
+        }
+        if (!isAureliaProject) {
+            console.log('info', '[Context] Not detected as an Aurelia project.');
+        }
+        await vscode_1.commands.executeCommand('setContext', 'aurelia:isAureliaProject', isAureliaProject);
+        return isAureliaProject;
+    }
+    async function updateContextKeys(editor = vscode_1.window.activeTextEditor) {
+        const isProject = await checkIsAureliaProject();
+        let hasPairedHtml = false;
+        let hasPairedTs = false;
+        if (isProject && editor) {
+            const document = editor.document;
+            const currentFilePath = document.uri.fsPath;
+            const currentDir = path.dirname(currentFilePath);
+            const baseName = path.basename(currentFilePath, path.extname(currentFilePath));
+            if (document.languageId === 'typescript') {
+                const potentialHtmlPath = path.join(currentDir, `${baseName}.html`);
+                try {
+                    const htmlFiles = await vscode_1.workspace.findFiles(vscode_1.workspace.asRelativePath(potentialHtmlPath), null, 1);
+                    hasPairedHtml = htmlFiles.length > 0;
+                }
+                catch { /* Ignore errors */ }
+            }
+            else if (document.languageId === 'html') {
+                const potentialTsPath = path.join(currentDir, `${baseName}.ts`);
+                try {
+                    const tsFiles = await vscode_1.workspace.findFiles(vscode_1.workspace.asRelativePath(potentialTsPath), null, 1);
+                    hasPairedTs = tsFiles.length > 0;
+                }
+                catch { /* Ignore errors */ }
+            }
+        }
+        console.log('debug', `[Context] Updating keys: isProject=${isProject}, hasPairedHtml=${hasPairedHtml}, hasPairedTs=${hasPairedTs}`);
+        await vscode_1.commands.executeCommand('setContext', 'aurelia:hasPairedHtml', hasPairedHtml);
+        await vscode_1.commands.executeCommand('setContext', 'aurelia:hasPairedTs', hasPairedTs);
+        // isAureliaProject context is set within checkIsAureliaProject itself
+    }
+    // Initial checks
+    checkIsAureliaProject().then(() => {
+        updateContextKeys(vscode_1.window.activeTextEditor);
+    });
+    // Watch for active editor changes
+    context.subscriptions.push(vscode_1.window.onDidChangeActiveTextEditor(editor => {
+        console.log('debug', '[Context] Active editor changed.');
+        updateContextKeys(editor);
+    }));
+    // Watch root package.json for changes
+    if (vscode_1.workspace.workspaceFolders && vscode_1.workspace.workspaceFolders.length > 0) {
+        const rootPath = vscode_1.workspace.workspaceFolders[0].uri.fsPath;
+        const pattern = new vscode_1.RelativePattern(vscode_1.workspace.workspaceFolders[0], 'package.json');
+        rootPackageJsonWatcher = vscode_1.workspace.createFileSystemWatcher(pattern);
+        rootPackageJsonWatcher.onDidChange(() => {
+            console.log('info', '[Context] Root package.json changed. Re-evaluating project status.');
+            isAureliaProject = undefined; // Clear cache
+            checkIsAureliaProject().then(() => {
+                updateContextKeys(vscode_1.window.activeTextEditor);
+            });
+        });
+        rootPackageJsonWatcher.onDidCreate(() => { });
+        rootPackageJsonWatcher.onDidDelete(() => { });
+        context.subscriptions.push(rootPackageJsonWatcher);
+    }
+    // Watch for TS/HTML file creation/deletion to update paired status
+    pairedFileWatcher = vscode_1.workspace.createFileSystemWatcher('**/*.{ts,html}');
+    const pairedFileChangeHandler = (uri) => {
+        console.log('debug', `[Context] Paired file watcher triggered for: ${uri.fsPath}`);
+        const activeEditor = vscode_1.window.activeTextEditor;
+        // Only update if the changed file could be the pair of the currently active file
+        if (activeEditor) {
+            const activePath = activeEditor.document.uri.fsPath;
+            const activeDir = path.dirname(activePath);
+            const activeBaseName = path.basename(activePath, path.extname(activePath));
+            const changedPath = uri.fsPath;
+            const changedDir = path.dirname(changedPath);
+            const changedBaseName = path.basename(changedPath, path.extname(changedPath));
+            if (activeDir === changedDir && activeBaseName === changedBaseName) {
+                console.log('info', '[Context] Change detected affects potential pair of active file. Updating context keys.');
+                updateContextKeys(activeEditor); // Re-run checks for the current editor
+            }
+        }
+    };
+    pairedFileWatcher.onDidChange(pairedFileChangeHandler); // Handle existing file changes (less relevant here)
+    pairedFileWatcher.onDidCreate(pairedFileChangeHandler);
+    pairedFileWatcher.onDidDelete(pairedFileChangeHandler);
+    context.subscriptions.push(pairedFileWatcher);
 }
 function deactivate() {
     if (!client) {
