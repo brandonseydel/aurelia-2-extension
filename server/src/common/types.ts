@@ -20,8 +20,12 @@ export interface HtmlParsingResult {
 // --- Interfaces ---
 export interface AureliaHtmlExpression {
     expression: string; // The raw expression string
-    type: 'interpolation' | 'binding';
+    // Type can be interpolation or the specific binding command (bind, trigger, etc.)
+    type: 'interpolation' | string; 
     htmlLocation: Location; // Use bypass type
+    // Optional: Only relevant for attribute bindings
+    attributeName?: string; // e.g., "value.bind"
+    elementTagName?: string; // e.g., "my-input"
 }
 
 // Detailed mapping between HTML expression and virtual file representation
@@ -29,7 +33,10 @@ export interface DetailedMapping {
     htmlExpressionLocation: Location; // Use bypass type
     virtualBlockRange: { start: number; end: number }; // Range of the entire placeholder block (e.g., const ___expr_1 = (...);)
     virtualValueRange: { start: number; end: number }; // Range of the expression value inside the block
-    type: 'interpolation' | 'binding';
+    // Type should mirror AureliaHtmlExpression.type
+    type: 'interpolation' | string;
+    attributeName?: string; // <<< ADDED: e.g., "value.bind"
+    elementTagName?: string; // <<< ADDED: e.g., "my-input"
     transformations: Array<{
         htmlRange: { start: number; end: number };     // Range of original identifier in HTML
         virtualRange: { start: number; end: number }; // Range of transformed identifier (_this.ident) in Virtual TS

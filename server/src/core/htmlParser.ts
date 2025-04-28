@@ -82,15 +82,20 @@ export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResu
                         const attrLocation = element.sourceCodeLocation.attrs[attr.name];
                         const valueStartOffset = attrLocation.startOffset + attr.name.length + 2;
                         const valueEndOffset = attrLocation.endOffset - 1;
+                        
+                        // Extract binding command (bind, trigger, etc.)
+                        const parts = attr.name.split('.');
+                        const bindingCommand = parts.length > 1 ? parts.pop() : 'bind'; // Default to bind?
+
                         if (valueStartOffset <= valueEndOffset) { // Use <= to handle empty values
                             const expression = attr.value;
                             const startLoc = calculateLocationFromOffset(htmlContent, valueStartOffset);
                             const endLoc = calculateLocationFromOffset(htmlContent, valueEndOffset);
                             if (startLoc && endLoc) {
-                                log('debug', `[extractExpressions] Creating BINDING mapping: attr='${attr.name}', expr='${expression}', startOffset=${valueStartOffset}, endOffset=${valueEndOffset}`);
+                                log('debug', `[extractExpressions] Creating BINDING mapping: attr='${attr.name}', expr='${expression}', startOffset=${valueStartOffset}, endOffset=${valueEndOffset}, element='${element.tagName}', command='${bindingCommand}'`);
                                 expressions.push({
                                     expression: expression === '' ? 'true' : expression, // Handle boolean attribute case
-                                    type: 'binding',
+                                    type: bindingCommand ?? 'bind', // Use extracted command
                                     htmlLocation: {
                                         startLine: startLoc.line,
                                         startCol: startLoc.col,
@@ -99,6 +104,8 @@ export function extractExpressionsFromHtml(htmlContent: string): HtmlParsingResu
                                         startOffset: valueStartOffset,
                                         endOffset: valueEndOffset,
                                     },
+                                    attributeName: attr.name, // Store full attribute name
+                                    elementTagName: element.tagName // Store tag name
                                 });
                             }
                         }

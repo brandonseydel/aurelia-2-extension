@@ -167,13 +167,45 @@ export function updateVirtualFile(
 
     const { expressions, elementTags } = extractExpressionsFromHtml(htmlContent);
 
+    // +++ 1. Identify Used Components and Prepare Imports +++
+    const importsToGenerate = new Map<string, { className: string; importPath: string }>();
+    for (const expr of expressions) {
+        if (expr.type !== 'interpolation' && expr.elementTagName) {
+            const componentInfo = aureliaProjectComponentMap.get(expr.elementTagName);
+            if (componentInfo && componentInfo.className && componentInfo.uri) {
+                if (!importsToGenerate.has(componentInfo.className)) { // Avoid duplicate class imports
+                    const componentFsPath = URI.parse(componentInfo.uri).fsPath;
+                    let relativeComponentPath = path.relative(path.dirname(virtualFsPath), componentFsPath)
+                        .replace(/\\/g, "/")
+                        .replace(/\.ts$/, "");
+                    if (!relativeComponentPath.startsWith(".")) {
+                        relativeComponentPath = "./" + relativeComponentPath;
+                    }
+                    importsToGenerate.set(componentInfo.className, {
+                        className: componentInfo.className,
+                        importPath: relativeComponentPath
+                    });
+                }
+            }
+        }
+    }
+
     // +++ Pass cache to getViewModelMemberNames +++
     const memberNames = getViewModelMemberNames(vmClassName, vmFsPath, languageService, viewModelMembersCache, program);
 
     // Build Virtual File Content 
     let virtualContent = `// Virtual file for ${htmlUri}\n`;
     virtualContent += `// Generated: ${new Date().toISOString()}\n\n`;
-    virtualContent += `import { ${vmClassName} } from '${relativeImportPath}';\n\n`;
+    virtualContent += `// --- ViewModel Import ---\n`;
+    virtualContent += `import { ${vmClassName} } from '${relativeImportPath}';\n`;
+    virtualContent += `// --- Custom Element Imports ---\n`;
+    // +++ 2. Add Custom Element Imports +++
+    for (const [_, importInfo] of importsToGenerate) {
+        virtualContent += `import { ${importInfo.className} } from '${importInfo.importPath}';\n`;
+    }
+    virtualContent += `\n`;
+
+    virtualContent += `// --- Declarations ---\n`;
     virtualContent += `declare const _this: ${vmClassName};\n\n`;
     virtualContent += `// --- Expression Placeholders ---\n`;
 
@@ -205,6 +237,8 @@ export function updateVirtualFile(
 
     expressions.forEach((expr, index) => {
         const placeholderVarName = `___expr_${index + 1}`;
+        let typeAnnotation = ''; // <<< Initialize type annotation string
+
         // <<< Keep original expression for VC part, transform base >>>
         let baseExpression = expr.expression;
         const pipeParts = expr.expression.split('|').map(p => p.trim());
@@ -260,8 +294,28 @@ export function updateVirtualFile(
             finalVirtualExprContent += pipeSuffix; // <<< Add original suffix back >>>
         }
 
+        // +++ 3. Determine Explicit Type for Bindings +++
+        if (expr.type !== 'interpolation' && expr.elementTagName && expr.attributeName) {
+            const componentInfo = aureliaProjectComponentMap.get(expr.elementTagName);
+            // Find the bindable info matching the attribute
+            const attributeNameWithoutCommand = expr.attributeName.split('.')[0];
+            const bindable = componentInfo?.bindables?.find(b => 
+                b.propertyName === attributeNameWithoutCommand || // Match TS property name (camelCase)
+                b.attributeName === attributeNameWithoutCommand // Match explicit HTML attribute name (kebab-case)
+            );
+
+            if (componentInfo?.className && bindable?.propertyName) {
+                // Use the TS propertyName for the type lookup
+                typeAnnotation = `: ${componentInfo.className}['${bindable.propertyName}']`;
+                log('debug', `[updateVirtualFile] Adding type annotation for ${expr.attributeName} on <${expr.elementTagName}>: ${typeAnnotation}`);
+            } else {
+                 log('warn', `[updateVirtualFile] Could not find bindable property '${attributeNameWithoutCommand}' or className for element '${expr.elementTagName}' to generate type annotation.`);
+            }
+        }
+
         // Construct line and calculate ranges
-        const linePrefix = `const ${placeholderVarName} = (`;
+        // +++ 4. Add Type Annotation to const declaration +++
+        const linePrefix = `const ${placeholderVarName}${typeAnnotation} = (`;
         const lineSuffix = `); // Origin: ${expr.type}\n`;
         const lineContent = linePrefix + finalVirtualExprContent + lineSuffix;
 
@@ -288,6 +342,8 @@ export function updateVirtualFile(
             virtualBlockRange: { start: virtualBlockStart, end: virtualBlockEnd },
             virtualValueRange: { start: virtualValueStart, end: virtualValueEnd }, // Store CORRECTED value range
             type: expr.type,
+            attributeName: expr.attributeName,
+            elementTagName: expr.elementTagName,
             transformations: finalTransformations
         });
         currentOffset = virtualBlockEnd; // Update offset for next iteration
@@ -312,7 +368,8 @@ export function updateVirtualFile(
         documents,
         aureliaDocuments,
         languageService,
-        connection
+        connection,
+        aureliaProjectComponentMap
     ),
     );
     // to ensure it runs after the current event loop tick.
