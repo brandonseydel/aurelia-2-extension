@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
-    "@types/node": "^20.11.10",
+    "@types/node": "^20.17.31",
     "@types/vscode": "^1.66.0",
     "@typescript-eslint/eslint-plugin": "^6.20.0",
     "@typescript-eslint/parser": "^6.20.0",
@@ -43,6 +43,16 @@
   },
   "editor.semanticHighlighting.enabled": true,
   "contributes": {
+    "commands": [
+      {
+        "command": "aurelia.gotoHtml",
+        "title": "Aurelia: Go to HTML View"
+      },
+      {
+        "command": "aurelia.gotoCustomElement",
+        "title": "Aurelia: Go to Custom Element Definition"
+      }
+    ],
     "grammars": [
       {
         "scopeName": "html.injection",
@@ -51,7 +61,7 @@
           "source.ts"
         ],
         "embeddedLanguages": {
-           "meta.embedded.block.html": "html"
+          "meta.embedded.block.html": "html"
         }
       },
       {
@@ -59,7 +69,7 @@
         "scopeName": "text.html.aurelia",
         "path": "./syntaxes/aurelia-html.tmLanguage.json",
         "embeddedLanguages": {
-          "meta.embedded.expression.aurelia.ts": "typescript" 
+          "meta.embedded.expression.aurelia.ts": "typescript"
         }
       }
     ],
@@ -116,6 +126,20 @@
         "id": "html",
         "configuration": "./language-configuration.json"
       }
-    ]
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "aurelia.gotoHtml",
+          "when": "editorLangId == typescript",
+          "group": "navigation"
+        },
+        {
+          "command": "aurelia.gotoCustomElement",
+          "when": "editorLangId == html",
+          "group": "navigation"
+        }
+      ]
+    }
   }
 }

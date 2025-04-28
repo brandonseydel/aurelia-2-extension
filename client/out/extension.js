@@ -39,6 +39,13 @@ const path = __importStar(require("path"));
 const vscode_1 = require("vscode");
 const node_1 = require("vscode-languageclient/node");
 let client;
+// Helper function to convert kebab-case to PascalCase
+function kebabToPascalCase(str) {
+    return str
+        .split('-')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+}
 function activate(context) {
     console.log('--- Activating Aurelia Language Client --- ');
     // Get workspace root path
@@ -83,6 +90,60 @@ function activate(context) {
     // Start the client. This will also launch the server
     client.start();
     console.log('Aurelia Language Client activated.');
+    // --- Register Go To Commands --- 
+    const goToHtmlCommand = vscode_1.commands.registerCommand('aurelia.gotoHtml', async () => {
+        const editor = vscode_1.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'typescript') {
+            return;
+        }
+        const currentFilePath = editor.document.uri.fsPath;
+        const currentDir = path.dirname(currentFilePath);
+        const baseName = path.basename(currentFilePath, path.extname(currentFilePath)); // Get filename without extension
+        const htmlFileName = `${baseName}.html`;
+        const potentialHtmlPath = path.join(currentDir, htmlFileName);
+        try {
+            // Check if the HTML file exists (more reliable than just constructing path)
+            const htmlFiles = await vscode_1.workspace.findFiles(vscode_1.workspace.asRelativePath(potentialHtmlPath), null, 1);
+            if (htmlFiles.length > 0) {
+                const htmlDoc = await vscode_1.workspace.openTextDocument(htmlFiles[0]);
+                await vscode_1.window.showTextDocument(htmlDoc);
+            }
+            else {
+                vscode_1.window.showInformationMessage(`Could not find corresponding HTML file: ${htmlFileName}`);
+            }
+        }
+        catch (error) {
+            console.error("Error finding or opening HTML file:", error);
+            vscode_1.window.showErrorMessage('Error navigating to HTML file.');
+        }
+    });
+    const goToCustomElementCommand = vscode_1.commands.registerCommand('aurelia.gotoCustomElement', async () => {
+        const editor = vscode_1.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'html') {
+            return;
+        }
+        const currentHtmlPath = editor.document.uri.fsPath;
+        const currentDir = path.dirname(currentHtmlPath);
+        const baseName = path.basename(currentHtmlPath, '.html'); // Get base name without .html
+        const tsFileName = `${baseName}.ts`;
+        const potentialTsPath = path.join(currentDir, tsFileName);
+        try {
+            // Search for the corresponding TypeScript file in the same directory
+            const tsFiles = await vscode_1.workspace.findFiles(vscode_1.workspace.asRelativePath(potentialTsPath), null, 1);
+            if (tsFiles.length > 0) {
+                const tsDoc = await vscode_1.workspace.openTextDocument(tsFiles[0]);
+                await vscode_1.window.showTextDocument(tsDoc);
+            }
+            else {
+                vscode_1.window.showInformationMessage(`Could not find corresponding definition file: ${tsFileName} in the same directory.`);
+            }
+        }
+        catch (error) {
+            console.error("Error finding or opening Custom Element definition:", error);
+            vscode_1.window.showErrorMessage('Error navigating to Custom Element definition.');
+        }
+    });
+    context.subscriptions.push(goToHtmlCommand, goToCustomElementCommand);
 }
 function deactivate() {
     if (!client) {
