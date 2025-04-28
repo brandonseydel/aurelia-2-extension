@@ -12,7 +12,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { TextDocuments } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
-import { AureliaDocumentInfo, DetailedMapping, AureliaProjectComponentMap, AureliaComponentInfo } from '../common/types'; 
+import { AureliaDocumentInfo, DetailedMapping, AureliaProjectComponentMap, AureliaComponentInfo } from '../common/types';
 import { log } from '../utils/logger';
 import { mapHtmlOffsetToVirtual } from '../core/virtualFileProvider';
 import { getTagAtOffset } from '../utils/htmlParsing';
@@ -55,8 +55,8 @@ function findHtmlFilesRecursive(dir: string, allFiles: string[] = []): string[] 
                     allFiles.push(filePath);
                 }
             } catch (e) {
-                 // Ignore errors for single file/stat (e.g., permission denied)
-                 log('warn', `[findHtmlFilesRecursive] Error processing ${filePath}: ${e}`);
+                // Ignore errors for single file/stat (e.g., permission denied)
+                log('warn', `[findHtmlFilesRecursive] Error processing ${filePath}: ${e}`);
             }
         });
     } catch (e) {
@@ -75,11 +75,12 @@ export async function handlePrepareRenameRequest(
     documents: TextDocuments<TextDocument>,
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
     languageService: ts.LanguageService,
-    aureliaProjectComponents: AureliaProjectComponentMap
+    aureliaProjectComponents: AureliaProjectComponentMap,
+    program: ts.Program | undefined
 ): Promise<LSPRange | { range: LSPRange, placeholder: string } | null> {
     const triggerUri = params.textDocument.uri;
     const document = documents.get(triggerUri);
-    if (!document) return null; 
+    if (!document) return null;
 
     const offset = document.offsetAt(params.position);
 
@@ -92,38 +93,38 @@ export async function handlePrepareRenameRequest(
             const componentInfo = aureliaProjectComponents.get(tagInfo.tagName);
 
             if (componentInfo && (componentInfo.type === 'element' || componentInfo.type === 'attribute')) {
-                 log('debug', `[onPrepareRename] Tag '${tagInfo.tagName}' is a known Aurelia ${componentInfo.type}. Allowing rename.`);
-                
-                 let renameRange: LSPRange | undefined;
-                 if (tagInfo.locations) {
-                     const relevantLocation = tagInfo.type === 'start' ? tagInfo.locations.startTag : tagInfo.locations.endTag;
-                     if (relevantLocation) {
-                         const startOffsetCorrection = tagInfo.type === 'start' ? 1 : 2;
-                         const startPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection);
-                         const endPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection + tagInfo.tagName.length);
-                         renameRange = LSPRange.create(startPos, endPos);
-                     }
-                 }
+                log('debug', `[onPrepareRename] Tag '${tagInfo.tagName}' is a known Aurelia ${componentInfo.type}. Allowing rename.`);
 
-                 if (!renameRange) {
-                      log('warn', `[onPrepareRename] Could not get precise location for tag '${tagInfo.tagName}' from parser. Using word range fallback.`);
-                     const wordRange = getWordRangeAtPosition(document, params.position);
-                     if (wordRange && document.getText(wordRange) === tagInfo.tagName) {
+                let renameRange: LSPRange | undefined;
+                if (tagInfo.locations) {
+                    const relevantLocation = tagInfo.type === 'start' ? tagInfo.locations.startTag : tagInfo.locations.endTag;
+                    if (relevantLocation) {
+                        const startOffsetCorrection = tagInfo.type === 'start' ? 1 : 2;
+                        const startPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection);
+                        const endPos = document.positionAt(relevantLocation.startOffset + startOffsetCorrection + tagInfo.tagName.length);
+                        renameRange = LSPRange.create(startPos, endPos);
+                    }
+                }
+
+                if (!renameRange) {
+                    log('warn', `[onPrepareRename] Could not get precise location for tag '${tagInfo.tagName}' from parser. Using word range fallback.`);
+                    const wordRange = getWordRangeAtPosition(document, params.position);
+                    if (wordRange && document.getText(wordRange) === tagInfo.tagName) {
                         renameRange = wordRange;
-                     } else {
-                         log('warn', `[onPrepareRename] Fallback word range check failed for tag '${tagInfo.tagName}'. Denying rename.`);
-                         return null;
-                     }
-                 }
+                    } else {
+                        log('warn', `[onPrepareRename] Fallback word range check failed for tag '${tagInfo.tagName}'. Denying rename.`);
+                        return null;
+                    }
+                }
 
-                 log('info', `[onPrepareRename] Allowing rename for tag '${tagInfo.tagName}' at range: ${JSON.stringify(renameRange)}`);
-                 return renameRange; 
+                log('info', `[onPrepareRename] Allowing rename for tag '${tagInfo.tagName}' at range: ${JSON.stringify(renameRange)}`);
+                return renameRange;
             } else {
                 log('debug', `[onPrepareRename] Tag '${tagInfo.tagName}' found, but it's not a known Aurelia component. Passing through.`);
             }
         }
     } else if (triggerUri.endsWith('.ts')) {
-        const program = languageService.getProgram();
+        program ??= languageService.getProgram();
         const sourceFile = program?.getSourceFile(URI.parse(triggerUri).fsPath);
 
         if (sourceFile && program) {
@@ -140,7 +141,7 @@ export async function handlePrepareRenameRequest(
                         const currentFileFsPath = URI.parse(triggerUri).fsPath;
 
                         if (componentInfo.className === className && componentUri === currentFileFsPath) {
-                            if (componentInfo.name === implicitName || aureliaProjectComponents.has(componentInfo.name)) { 
+                            if (componentInfo.name === implicitName || aureliaProjectComponents.has(componentInfo.name)) {
                                 log('info', `[onPrepareRename] Allowing rename for TS class '${className}' (component: ${componentInfo.name}) at range: ${node.getStart()}-${node.getEnd()}`);
                                 const startPos = document.positionAt(node.getStart());
                                 const endPos = document.positionAt(node.getEnd());
@@ -151,16 +152,16 @@ export async function handlePrepareRenameRequest(
                             }
                         }
                     }
-                     log('debug', `[onPrepareRename] Class '${className}' at offset ${offset} is not a known renameable Aurelia component definition.`);
-                 }
-             }
+                    log('debug', `[onPrepareRename] Class '${className}' at offset ${offset} is not a known renameable Aurelia component definition.`);
+                }
+            }
         }
         log('debug', `[onPrepareRename] TS file detected (${triggerUri}), but cursor at offset ${offset} not on a known Aurelia component class name.`);
     }
 
     if (triggerUri.endsWith('.html')) {
         const docInfo = aureliaDocuments.get(triggerUri);
-        if (!docInfo) return null; 
+        if (!docInfo) return null;
 
         let activeMapping: DetailedMapping | undefined;
         for (const mapping of docInfo.mappings) {
@@ -172,17 +173,17 @@ export async function handlePrepareRenameRequest(
 
         if (!activeMapping) {
             log('debug', `[onPrepareRename] HTML offset ${offset} not on tag (checked above) and not in expression.`);
-            return null; 
+            return null;
         }
-        
-        const virtualOffset = mapHtmlOffsetToVirtual(offset, activeMapping); 
+
+        const virtualOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
         log('debug', `[onPrepareRename] Mapped HTML Offset ${offset} to Virtual Offset ${virtualOffset} for expression rename.`);
-    
+
         const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
-        const virtualFile = languageService.getProgram()?.getSourceFile(virtualFsPath);
+        const virtualFile = (program ?? languageService.getProgram())?.getSourceFile(virtualFsPath);
         if (!virtualFile) {
-             log('warn', `[onPrepareRename] Could not get virtual source file ${virtualFsPath} from program.`);
-             return null;
+            log('warn', `[onPrepareRename] Could not get virtual source file ${virtualFsPath} from program.`);
+            return null;
         }
 
         const definitionInfo = languageService.getDefinitionAndBoundSpan(virtualFsPath, virtualOffset);
@@ -191,26 +192,26 @@ export async function handlePrepareRenameRequest(
             return null;
         }
         const originVirtualSpan = definitionInfo.textSpan;
-    
+
         const renameInfo = languageService.getRenameInfo(virtualFsPath, originVirtualSpan.start, { allowRenameOfImportPath: false });
         if (!renameInfo.canRename) {
             log('debug', "[onPrepareRename] TS reports rename not possible for the identified expression span.");
             return null;
         }
-    
+
         const virtualSpanStart = originVirtualSpan.start;
         const virtualSpanEnd = virtualSpanStart + originVirtualSpan.length;
         let htmlStartOffset: number | undefined;
         let htmlEndOffset: number | undefined;
-    
-        const containingTransformation = activeMapping.transformations.find(t => 
+
+        const containingTransformation = activeMapping.transformations.find(t =>
             virtualSpanStart >= t.virtualRange.start && virtualSpanStart < t.virtualRange.end
         );
-    
+
         if (containingTransformation) {
             htmlStartOffset = containingTransformation.htmlRange.start;
             const htmlLength = containingTransformation.htmlRange.end - containingTransformation.htmlRange.start;
-            htmlEndOffset = containingTransformation.htmlRange.start + htmlLength; 
+            htmlEndOffset = containingTransformation.htmlRange.start + htmlLength;
             log('debug', `[onPrepareRename][Expr] Using containing transformation range: ${htmlStartOffset}-${htmlEndOffset}`);
         } else {
             log('debug', `[onPrepareRename][Expr] Virtual span ${virtualSpanStart}-${virtualSpanEnd} not in transformation. Mapping manually.`);
@@ -226,30 +227,30 @@ export async function handlePrepareRenameRequest(
             const spanLength = virtualSpanEnd - virtualSpanStart;
             htmlEndOffset = htmlStartOffset + spanLength;
         }
-    
+
         const htmlExprStart = activeMapping.htmlExpressionLocation.startOffset;
         const htmlExprEnd = activeMapping.htmlExpressionLocation.endOffset;
-        const clampedHtmlStart = Math.max(htmlStartOffset ?? htmlExprStart, htmlExprStart); 
-        let clampedHtmlEnd = Math.min(htmlEndOffset ?? htmlExprEnd, htmlExprEnd); 
+        const clampedHtmlStart = Math.max(htmlStartOffset ?? htmlExprStart, htmlExprStart);
+        let clampedHtmlEnd = Math.min(htmlEndOffset ?? htmlExprEnd, htmlExprEnd);
         clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
-    
+
         if (clampedHtmlStart > htmlExprEnd || clampedHtmlEnd < clampedHtmlStart || htmlStartOffset === undefined || htmlEndOffset === undefined) {
             log('warn', `[onPrepareRename][Expr] Invalid mapped HTML range after clamping [${clampedHtmlStart}-${clampedHtmlEnd}], original: [${htmlStartOffset}-${htmlEndOffset}]`);
             return null;
         }
-    
+
         const htmlRange = LSPRange.create(
             document.positionAt(clampedHtmlStart),
             document.positionAt(clampedHtmlEnd)
         );
         const placeholder = document.getText(htmlRange);
-    
+
         log('info', `[onPrepareRename] Rename possible for range (expression): ${JSON.stringify(htmlRange)}, placeholder: ${placeholder}`);
         return { range: htmlRange, placeholder };
     }
 
     log('debug', `[onPrepareRename] Offset ${offset} in ${triggerUri} did not correspond to a renameable Aurelia entity (tag, decorator name, or expression symbol).`);
-    return null; 
+    return null;
 }
 
 /**
@@ -260,10 +261,11 @@ export async function handleRenameRequest(
     documents: TextDocuments<TextDocument>,
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
     languageService: ts.LanguageService,
-    aureliaProjectComponents: AureliaProjectComponentMap
+    aureliaProjectComponents: AureliaProjectComponentMap,
+    program: ts.Program | undefined
 ): Promise<WorkspaceEdit | undefined> {
     log('info', `[onRenameRequest] Handler Entered. URI: ${params.textDocument.uri}, New Name: ${params.newName}`);
-    
+
     const triggerUri = params.textDocument.uri;
     const document = documents.get(triggerUri);
     if (!document) return undefined;
@@ -284,10 +286,8 @@ export async function handleRenameRequest(
     let oldName: string | undefined;
     let componentInfo: AureliaComponentInfo | undefined;
 
-    // <<< Get workspaceRoot from languageService or connection options (assuming it's available)
-    // This needs to be correctly obtained from the server initialization or settings
-    const program = languageService.getProgram();
-    const workspaceRoot = program?.getCurrentDirectory() ?? process.cwd(); 
+    program ??= languageService.getProgram();
+    const workspaceRoot = program?.getCurrentDirectory() ?? process.cwd();
     log('debug', `[onRenameRequest] Determined workspace root: ${workspaceRoot}`);
 
     // --- Determine Rename Type: Custom Element or Expression Symbol --- 
@@ -297,9 +297,9 @@ export async function handleRenameRequest(
         if (tagInfo) {
             componentInfo = aureliaProjectComponents.get(tagInfo.tagName);
             if (componentInfo && (componentInfo.type === 'element' || componentInfo.type === 'attribute')) {
-                 isCustomElementRename = true;
-                 oldName = tagInfo.tagName;
-                 log('debug', `[onRenameRequest] Detected rename trigger on HTML tag: ${oldName}`);
+                isCustomElementRename = true;
+                oldName = tagInfo.tagName;
+                log('debug', `[onRenameRequest] Detected rename trigger on HTML tag: ${oldName}`);
             }
         }
     } else if (triggerUri.endsWith('.ts')) {
@@ -310,15 +310,15 @@ export async function handleRenameRequest(
                 const className = node.parent.name?.getText(sourceFile);
                 const currentFileFsPath = URI.parse(triggerUri).fsPath;
                 if (className) {
-                     // Find the component defined by this class in this file
-                     for (const [name, info] of aureliaProjectComponents.entries()) {
+                    // Find the component defined by this class in this file
+                    for (const [name, info] of aureliaProjectComponents.entries()) {
                         if (info.className === className && URI.parse(info.uri).fsPath === currentFileFsPath) {
-                             isCustomElementRename = true;
-                             oldName = info.name; // The tag name associated with the class
-                             componentInfo = info;
-                             log('debug', `[onRenameRequest] Detected rename trigger on TS class: ${className} (Component: ${oldName})`);
-                             break;
-                         }
+                            isCustomElementRename = true;
+                            oldName = info.name; // The tag name associated with the class
+                            componentInfo = info;
+                            log('debug', `[onRenameRequest] Detected rename trigger on TS class: ${className} (Component: ${oldName})`);
+                            break;
+                        }
                     }
                 }
             }
@@ -336,14 +336,14 @@ export async function handleRenameRequest(
         // <<< Use recursive file search instead of documents.all() >>>
         const htmlFilePaths = findHtmlFilesRecursive(workspaceRoot);
         log('debug', `[onRenameRequest] Found ${htmlFilePaths.length} HTML files to check.`);
-        
+
         // Regex to find start and end tags, carefully targeting only the name
         // <old-name ...>, </old-name>
         // Need to escape oldName in case it contains regex special chars
         const escapedOldName = oldName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
         const startTagRegex = new RegExp(`(<)(${escapedOldName})(\\s|>)`, 'gi');
         const endTagRegex = new RegExp(`(<\\/)(${escapedOldName})(>)`, 'gi');
-        
+
         // <<< Iterate through file paths >>>
         for (const htmlFilePath of htmlFilePaths) {
             try {
@@ -358,7 +358,7 @@ export async function handleRenameRequest(
                 log('debug', `    - End Tag Regex: ${endTagRegex}`);
 
                 while ((match = startTagRegex.exec(text)) !== null) {
-                     const startOffset = match.index + match[1].length;
+                    const startOffset = match.index + match[1].length;
                     const endOffset = startOffset + match[2].length;
                     // Need a temporary TextDocument to convert offsets to positions
                     const tempDoc = TextDocument.create(htmlDocUri, 'html', 0, text);
@@ -371,7 +371,7 @@ export async function handleRenameRequest(
                 while ((match = endTagRegex.exec(text)) !== null) {
                     const startOffset = match.index + match[1].length;
                     const endOffset = startOffset + match[2].length;
-                     const tempDoc = TextDocument.create(htmlDocUri, 'html', 0, text);
+                    const tempDoc = TextDocument.create(htmlDocUri, 'html', 0, text);
                     const range = LSPRange.create(tempDoc.positionAt(startOffset), tempDoc.positionAt(endOffset));
                     addEdit(htmlDocUri, TextEdit.replace(range, newName));
                     editsFoundInFile = true;
@@ -405,13 +405,13 @@ export async function handleRenameRequest(
                 }
             }
             // <<< Proceed only if document is available >>>
-            if (tsDocument && !docReadError) { 
+            if (tsDocument && !docReadError) {
                 log('debug', `[onRenameRequest] Analyzing TS definition file: ${tsUri}`);
                 let decoratorFound = false;
                 let importFound = false;
                 let importName = 'customElement'; // Default import name
                 let importStatementToAdd: TextEdit | undefined;
-                if (componentInfo.className) { 
+                if (componentInfo.className) {
                     const classNode = findNodeByClassName(sourceFile, componentInfo.className);
 
                     if (classNode && ts.isClassDeclaration(classNode)) {
@@ -425,38 +425,38 @@ export async function handleRenameRequest(
                                 if (ts.isCallExpression(decorator.expression) && ts.isIdentifier(decorator.expression.expression)) {
                                     const decoratorId = decorator.expression.expression;
                                     if (decoratorId.getText(sourceFile) === 'customElement') { // Found @customElement(...)
-                                         existingDecoratorToModify = decorator;
-                                         log('debug', `  - Found @customElement decorator.`);
-                                         if (decorator.expression.arguments.length > 0) {
-                                             const arg = decorator.expression.arguments[0];
-                                             if (ts.isStringLiteral(arg) && arg.text === oldName) {
-                                                 // Case 1: @customElement('old-name')
-                                                 log('debug', `    - Found direct string argument matching oldName: '${arg.text}'`);
-                                                 nameLiteralToReplace = arg;
-                                                 break; // Found the exact one we need
-                                             } else if (ts.isObjectLiteralExpression(arg)) {
-                                                 // Case 2: @customElement({ name: 'old-name', ... })
-                                                 log('debug', `    - Found object literal argument. Searching for 'name' property...`);
-                                                 for (const prop of arg.properties) {
-                                                     if (ts.isPropertyAssignment(prop) && 
-                                                         prop.name && prop.name.getText(sourceFile) === 'name' && 
-                                                         ts.isStringLiteral(prop.initializer)) {
-                                                         log('debug', `      - Found name property with value: '${prop.initializer.text}'`);
-                                                         if (prop.initializer.text === oldName) {
-                                                             log('debug', `        - MATCH! This property value equals oldName.`);
-                                                             nameLiteralToReplace = prop.initializer;
-                                                             break; // Found the name property
-                                                         } else {
-                                                             log('debug', `        - NO MATCH: Value '${prop.initializer.text}' !== oldName '${oldName}'`);
-                                                         }
-                                                     }
-                                                 }
-                                                 if (nameLiteralToReplace) break; // Found decorator and name property
-                                             }
-                                         }
-                                         // If decorator found but name didn't match oldName, keep searching just in case
-                                         // but prioritize the one found
-                                     }
+                                        existingDecoratorToModify = decorator;
+                                        log('debug', `  - Found @customElement decorator.`);
+                                        if (decorator.expression.arguments.length > 0) {
+                                            const arg = decorator.expression.arguments[0];
+                                            if (ts.isStringLiteral(arg) && arg.text === oldName) {
+                                                // Case 1: @customElement('old-name')
+                                                log('debug', `    - Found direct string argument matching oldName: '${arg.text}'`);
+                                                nameLiteralToReplace = arg;
+                                                break; // Found the exact one we need
+                                            } else if (ts.isObjectLiteralExpression(arg)) {
+                                                // Case 2: @customElement({ name: 'old-name', ... })
+                                                log('debug', `    - Found object literal argument. Searching for 'name' property...`);
+                                                for (const prop of arg.properties) {
+                                                    if (ts.isPropertyAssignment(prop) &&
+                                                        prop.name && prop.name.getText(sourceFile) === 'name' &&
+                                                        ts.isStringLiteral(prop.initializer)) {
+                                                        log('debug', `      - Found name property with value: '${prop.initializer.text}'`);
+                                                        if (prop.initializer.text === oldName) {
+                                                            log('debug', `        - MATCH! This property value equals oldName.`);
+                                                            nameLiteralToReplace = prop.initializer;
+                                                            break; // Found the name property
+                                                        } else {
+                                                            log('debug', `        - NO MATCH: Value '${prop.initializer.text}' !== oldName '${oldName}'`);
+                                                        }
+                                                    }
+                                                }
+                                                if (nameLiteralToReplace) break; // Found decorator and name property
+                                            }
+                                        }
+                                        // If decorator found but name didn't match oldName, keep searching just in case
+                                        // but prioritize the one found
+                                    }
                                 }
                             }
                         }
@@ -470,21 +470,21 @@ export async function handleRenameRequest(
                             );
                             addEdit(tsUri, TextEdit.replace(range, newName));
                             log('debug', `[onRenameRequest] Updating existing @customElement decorator argument in ${tsUri} range: ${JSON.stringify(range)}`);
-                        } else if (!existingDecoratorToModify) { 
+                        } else if (!existingDecoratorToModify) {
                             // Add new decorator only if NO @customElement decorator exists
-                            let insertPosOffset = classNode.getStart(); 
+                            let insertPosOffset = classNode.getStart();
                             const decorators = ts.getDecorators ? ts.getDecorators(classNode) : undefined;
                             if (decorators && decorators.length > 0) {
                                 // <<< Fix sort and types >>>
                                 const sortedDecorators = [...decorators].sort((a: ts.Decorator, b: ts.Decorator) => a.getStart() - b.getStart());
-                                insertPosOffset = sortedDecorators[0].getStart(); 
+                                insertPosOffset = sortedDecorators[0].getStart();
                                 log('debug', `  - Found existing decorators. Targeting insert before the first one at offset ${insertPosOffset}`);
                             } else {
-                                 log('debug', `  - No existing decorators found. Targeting insert at class start offset ${insertPosOffset}`);
+                                log('debug', `  - No existing decorators found. Targeting insert at class start offset ${insertPosOffset}`);
                             }
 
-                            const decoratorText = `@${importName}('${newName}')` + '\n'; 
-                            const insertPosition = tsDocument.positionAt(insertPosOffset); 
+                            const decoratorText = `@${importName}('${newName}')` + '\n';
+                            const insertPosition = tsDocument.positionAt(insertPosOffset);
                             addEdit(tsUri, TextEdit.insert(insertPosition, decoratorText));
                             log('debug', `[onRenameRequest] Adding new @customElement decorator to class ${componentInfo.className} in ${tsUri}`);
 
@@ -495,7 +495,7 @@ export async function handleRenameRequest(
                                     if (ts.isStringLiteral(moduleSpecifier)) {
                                         const importPath = moduleSpecifier.text;
                                         // Use a more specific check for Aurelia 2
-                                        if (importPath === '@aurelia/runtime-html' || importPath === 'aurelia') { 
+                                        if (importPath === '@aurelia/runtime-html' || importPath === 'aurelia') {
                                             if (node.importClause?.namedBindings) {
                                                 if (ts.isNamedImports(node.importClause.namedBindings)) {
                                                     node.importClause.namedBindings.elements.forEach(element => {
@@ -514,15 +514,15 @@ export async function handleRenameRequest(
                             // Add import if missing
                             if (!importFound) {
                                 const importStatementText = `import { customElement } from '@aurelia/runtime-html';\n`;
-                                let lastImportEndOffset = 0; 
+                                let lastImportEndOffset = 0;
                                 for (const statement of sourceFile.statements) {
                                     if (ts.isImportDeclaration(statement)) {
                                         lastImportEndOffset = Math.max(lastImportEndOffset, statement.getEnd());
                                     }
                                 }
                                 const finalImportStatementText = lastImportEndOffset > 0 ? `\n${importStatementText}` : importStatementText;
-                                const importPosition = tsDocument.positionAt(lastImportEndOffset); 
-                                importStatementToAdd = TextEdit.insert(importPosition, finalImportStatementText); 
+                                const importPosition = tsDocument.positionAt(lastImportEndOffset);
+                                importStatementToAdd = TextEdit.insert(importPosition, finalImportStatementText);
                                 log('debug', `[onRenameRequest] Adding missing 'customElement' import to ${tsUri} at offset ${lastImportEndOffset}`);
                             }
                         }
@@ -533,14 +533,14 @@ export async function handleRenameRequest(
                             addEdit(tsUri, importStatementToAdd);
                         }
                     } else {
-                         log('warn', `[onRenameRequest] Could not find class node '${componentInfo.className}' in ${tsUri}`);
+                        log('warn', `[onRenameRequest] Could not find class node '${componentInfo.className}' in ${tsUri}`);
                     }
                 } else {
-                     log('warn', `[onRenameRequest] Component info for ${oldName} is missing className.`);
+                    log('warn', `[onRenameRequest] Component info for ${oldName} is missing className.`);
                 }
             } // <<< End if (tsDocument && !docReadError)
         } else {
-             log('warn', `[onRenameRequest] Could not get source file for TS definition: ${tsUri}`);
+            log('warn', `[onRenameRequest] Could not get source file for TS definition: ${tsUri}`);
         }
 
         // --- Convert edits map to documentChanges array --- 
@@ -558,21 +558,21 @@ export async function handleRenameRequest(
                 // This is tricky. Let's assume for now `documents.get(uri)` works for TS 
                 // and use the tempDoc created earlier for HTML files.
                 // A more robust solution might need caching content or reading again.
-                let tempDocForSort: TextDocument | undefined = openDoc; 
+                let tempDocForSort: TextDocument | undefined = openDoc;
                 if (!tempDocForSort && uri.endsWith('.html')) {
-                     try {
+                    try {
                         // Attempt to read content again for sorting if not open
                         const filePath = URI.parse(uri).fsPath;
                         tempDocForSort = TextDocument.create(uri, 'html', 0, fs.readFileSync(filePath, 'utf-8'));
                     } catch (e) {
-                         log('error', `[onRenameRequest] Failed to read ${uri} for sorting edits: ${e}`);
+                        log('error', `[onRenameRequest] Failed to read ${uri} for sorting edits: ${e}`);
                         return 0; // Cannot sort reliably
                     }
                 } else if (!tempDocForSort) {
                     log('warn', `[onRenameRequest] Cannot get document ${uri} for sorting TS edits. Edits may apply incorrectly.`);
-                     return 0; // Cannot sort reliably
+                    return 0; // Cannot sort reliably
                 }
-                
+
                 const offsetA = tempDocForSort.offsetAt(a.range.start);
                 const offsetB = tempDocForSort.offsetAt(b.range.start);
                 return offsetB - offsetA; // Sort descending
@@ -586,12 +586,12 @@ export async function handleRenameRequest(
     } else {
         // --- Original Expression Symbol Rename Logic ---
         log('info', `[onRenameRequest] Processing Expression Symbol rename in ${triggerUri}`);
-        
+
         const docInfo = aureliaDocuments.get(triggerUri);
         if (!docInfo) {
             log('warn', `[onRenameRequest] No Aurelia document info found for ${triggerUri} for expression rename.`);
             return undefined;
-        } 
+        }
 
         let activeMapping: DetailedMapping | undefined;
         for (const mapping of docInfo.mappings) {
@@ -603,7 +603,7 @@ export async function handleRenameRequest(
 
         if (!activeMapping) {
             log('warn', `[onRenameRequest] Offset ${offset} not within mapped expression for expression rename.`);
-            return undefined; 
+            return undefined;
         }
 
         const virtualOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
@@ -618,7 +618,7 @@ export async function handleRenameRequest(
             log('error', `[onRenameRequest] Error calling findRenameLocations for expression: ${e}`);
             return undefined;
         }
-        
+
         if (!renameLocations) {
             log('warn', "[onRenameRequest] TS could not find rename locations for expression symbol.");
             return undefined;
@@ -627,22 +627,22 @@ export async function handleRenameRequest(
         log('info', `[onRenameRequest] Found ${renameLocations.length} potential rename locations for expression symbol.`);
 
         // Clear edits map as we are in a different logic path
-        editsByUri.clear(); 
+        editsByUri.clear();
 
         for (const location of renameLocations) {
             // ... (Keep the existing complex mapping logic from the original function) ...
             // Existing code for mapping virtual locations back to HTML or TS files
             const targetFsPathRaw = location.fileName;
-            const targetFsPath = targetFsPathRaw.replace(/\\/g, '/'); 
+            const targetFsPath = targetFsPathRaw.replace(/\\/g, '/');
             let targetUri = URI.file(targetFsPathRaw).toString();
             const locationVirtualSpan = location.textSpan;
             const virtualStart = locationVirtualSpan.start;
             const virtualEnd = virtualStart + locationVirtualSpan.length;
             let targetRange: LSPRange | undefined;
-   
+
             const normalizedVmFsPath = docInfo.vmFsPath.replace(/\\/g, '/');
             const normalizedVirtualFsPath = URI.parse(docInfo.virtualUri).fsPath.replace(/\\/g, '/');
-   
+
             if (targetFsPath === normalizedVmFsPath) {
                 // Case 1: Location is in the original ViewModel file
                 const vmDocument = TextDocument.create(targetUri, 'typescript', 0, ts.sys.readFile(targetFsPathRaw) ?? ''); // Read content to map offset
@@ -651,9 +651,9 @@ export async function handleRenameRequest(
                     log('debug', `[onRenameRequest][Expr] Mapped rename to VM file: ${targetUri} Range: ${JSON.stringify(targetRange)}`);
                 }
             } else if (targetFsPath === normalizedVirtualFsPath) {
-                 // Case 2: Location is in the Virtual File (map back to HTML)
-                 targetUri = triggerUri; // Edit needs to be applied to the original HTML URI
-                 let locationMapping = docInfo.mappings.find(m => 
+                // Case 2: Location is in the Virtual File (map back to HTML)
+                targetUri = triggerUri; // Edit needs to be applied to the original HTML URI
+                let locationMapping = docInfo.mappings.find(m =>
                     m.virtualValueRange.start <= virtualStart && virtualEnd <= m.virtualValueRange.end
                 );
                 if (!locationMapping) {
@@ -664,71 +664,71 @@ export async function handleRenameRequest(
                         continue;
                     }
                 }
-   
+
                 let htmlStartOffset: number;
                 let htmlEndOffset: number;
-                const containingTransformation = locationMapping.transformations.find(t => 
+                const containingTransformation = locationMapping.transformations.find(t =>
                     virtualStart >= t.virtualRange.start && virtualStart < t.virtualRange.end
-                 );
-   
-                 if (containingTransformation) {
-                     htmlStartOffset = containingTransformation.htmlRange.start;
-                     const htmlLength = containingTransformation.htmlRange.end - containingTransformation.htmlRange.start;
-                      // Adjust length based on the *portion* of the transformation the virtual span covers
-                     // This is complex, let's try simpler span length mapping first
-                     //htmlEndOffset = containingTransformation.htmlRange.start + htmlLength;
-                     const spanLength = virtualEnd - virtualStart;
-                     const relativeVirtualStart = virtualStart - containingTransformation.virtualRange.start;
-                     // Assume mapping is mostly linear within the transformation identifier
-                     htmlEndOffset = htmlStartOffset + spanLength; 
-                     log('debug', `[onRenameRequest][Expr] Mapping via transformation: VS=${virtualStart} VSE=${virtualEnd} HS=${htmlStartOffset} HSE=${htmlEndOffset}`);
-                 } else {
-                      let accumulatedOffsetDeltaBeforeStart = 0;
-                      for (const transform of locationMapping.transformations) {
-                          if (transform.virtualRange.end <= virtualStart) {
-                              accumulatedOffsetDeltaBeforeStart += transform.offsetDelta;
-                          }
-                      }
-                      const baseHtmlOffset = locationMapping.htmlExpressionLocation.startOffset;
-                      const baseVirtualOffset = locationMapping.virtualValueRange.start;
-                      htmlStartOffset = baseHtmlOffset + (virtualStart - baseVirtualOffset) - accumulatedOffsetDeltaBeforeStart;
-                      const spanLength = virtualEnd - virtualStart;
-                      htmlEndOffset = htmlStartOffset + spanLength;
-                      log('debug', `[onRenameRequest][Expr] Mapping via offset calc: VS=${virtualStart} VSE=${virtualEnd} HS=${htmlStartOffset} HSE=${htmlEndOffset}`);
-                 }
-   
-                // Clamp and validate
-                 const htmlExprStart = locationMapping.htmlExpressionLocation.startOffset;
-                 const htmlExprEnd = locationMapping.htmlExpressionLocation.endOffset;
-                 const clampedHtmlStart = Math.max(htmlStartOffset, htmlExprStart);
-                 let clampedHtmlEnd = Math.min(htmlEndOffset, htmlExprEnd);
-                 clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
-   
-                 if (clampedHtmlStart <= htmlExprEnd && clampedHtmlEnd >= clampedHtmlStart && htmlStartOffset !== undefined && htmlEndOffset !== undefined) {
-                    targetRange = LSPRange.create(document.positionAt(clampedHtmlStart), document.positionAt(clampedHtmlEnd));
-                     log('debug', `[onRenameRequest][Expr] Mapped rename to HTML: ${targetUri} Range: ${JSON.stringify(targetRange)}`);
+                );
+
+                if (containingTransformation) {
+                    htmlStartOffset = containingTransformation.htmlRange.start;
+                    const htmlLength = containingTransformation.htmlRange.end - containingTransformation.htmlRange.start;
+                    // Adjust length based on the *portion* of the transformation the virtual span covers
+                    // This is complex, let's try simpler span length mapping first
+                    //htmlEndOffset = containingTransformation.htmlRange.start + htmlLength;
+                    const spanLength = virtualEnd - virtualStart;
+                    const relativeVirtualStart = virtualStart - containingTransformation.virtualRange.start;
+                    // Assume mapping is mostly linear within the transformation identifier
+                    htmlEndOffset = htmlStartOffset + spanLength;
+                    log('debug', `[onRenameRequest][Expr] Mapping via transformation: VS=${virtualStart} VSE=${virtualEnd} HS=${htmlStartOffset} HSE=${htmlEndOffset}`);
                 } else {
-                     log('warn', `[onRenameRequest][Expr] Invalid mapped HTML range [${clampedHtmlStart}-${clampedHtmlEnd}], Original [${htmlStartOffset}-${htmlEndOffset}] for virtual location [${virtualStart}-${virtualEnd}]`);
-                     continue;
-                 }
+                    let accumulatedOffsetDeltaBeforeStart = 0;
+                    for (const transform of locationMapping.transformations) {
+                        if (transform.virtualRange.end <= virtualStart) {
+                            accumulatedOffsetDeltaBeforeStart += transform.offsetDelta;
+                        }
+                    }
+                    const baseHtmlOffset = locationMapping.htmlExpressionLocation.startOffset;
+                    const baseVirtualOffset = locationMapping.virtualValueRange.start;
+                    htmlStartOffset = baseHtmlOffset + (virtualStart - baseVirtualOffset) - accumulatedOffsetDeltaBeforeStart;
+                    const spanLength = virtualEnd - virtualStart;
+                    htmlEndOffset = htmlStartOffset + spanLength;
+                    log('debug', `[onRenameRequest][Expr] Mapping via offset calc: VS=${virtualStart} VSE=${virtualEnd} HS=${htmlStartOffset} HSE=${htmlEndOffset}`);
+                }
+
+                // Clamp and validate
+                const htmlExprStart = locationMapping.htmlExpressionLocation.startOffset;
+                const htmlExprEnd = locationMapping.htmlExpressionLocation.endOffset;
+                const clampedHtmlStart = Math.max(htmlStartOffset, htmlExprStart);
+                let clampedHtmlEnd = Math.min(htmlEndOffset, htmlExprEnd);
+                clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
+
+                if (clampedHtmlStart <= htmlExprEnd && clampedHtmlEnd >= clampedHtmlStart && htmlStartOffset !== undefined && htmlEndOffset !== undefined) {
+                    targetRange = LSPRange.create(document.positionAt(clampedHtmlStart), document.positionAt(clampedHtmlEnd));
+                    log('debug', `[onRenameRequest][Expr] Mapped rename to HTML: ${targetUri} Range: ${JSON.stringify(targetRange)}`);
+                } else {
+                    log('warn', `[onRenameRequest][Expr] Invalid mapped HTML range [${clampedHtmlStart}-${clampedHtmlEnd}], Original [${htmlStartOffset}-${htmlEndOffset}] for virtual location [${virtualStart}-${virtualEnd}]`);
+                    continue;
+                }
             } else {
                 // Case 3: Location is in some other TS file (import, etc.)
-                 const otherSourceFile = languageService.getProgram()?.getSourceFile(targetFsPathRaw);
-                 if (otherSourceFile) {
-                     const otherDocument = TextDocument.create(targetUri, 'typescript', 0, otherSourceFile.getFullText());
-                     targetRange = LSPRange.create(otherDocument.positionAt(virtualStart), otherDocument.positionAt(virtualEnd));
-                      log('debug', `[onRenameRequest][Expr] Mapped rename to other TS file: ${targetUri} Range: ${JSON.stringify(targetRange)}`);
-                 } else {
+                const otherSourceFile = (program ?? languageService.getProgram())?.getSourceFile(targetFsPathRaw);
+                if (otherSourceFile) {
+                    const otherDocument = TextDocument.create(targetUri, 'typescript', 0, otherSourceFile.getFullText());
+                    targetRange = LSPRange.create(otherDocument.positionAt(virtualStart), otherDocument.positionAt(virtualEnd));
+                    log('debug', `[onRenameRequest][Expr] Mapped rename to other TS file: ${targetUri} Range: ${JSON.stringify(targetRange)}`);
+                } else {
                     log('warn', `[onRenameRequest][Expr] Could not get source file for other TS location: ${targetFsPathRaw}`);
-                 }
+                }
             }
 
             if (targetRange) {
-                 addEdit(targetUri, TextEdit.replace(targetRange, newName));
+                addEdit(targetUri, TextEdit.replace(targetRange, newName));
             }
         }
         // --- Convert edits map to documentChanges array (for expression rename) --- 
-         for (const [uri, edits] of editsByUri.entries()) {
+        for (const [uri, edits] of editsByUri.entries()) {
             let docVersion: number | null = null;
             const openDoc = documents.get(uri);
             if (openDoc) {
@@ -736,30 +736,30 @@ export async function handleRenameRequest(
             }
             // <<< Also sort edits here for consistency >>>
             const sortedEdits = edits.sort((a, b) => {
-                 let tempDocForSort: TextDocument | undefined = openDoc;
-                 // Logic to get document content if not open (can be complex for TS)
-                 // For expression renames, involved files are likely TS files from findRenameLocations
-                 if (!tempDocForSort) {
-                     try {
-                         const filePath = URI.parse(uri).fsPath;
-                         const fileContent = fs.readFileSync(filePath, 'utf-8');
-                         tempDocForSort = TextDocument.create(uri, 'typescript', 0, fileContent);
-                     } catch (e) {
-                         log('error', `[onRenameRequest][Expr] Failed to read ${uri} for sorting edits: ${e}`);
-                         return 0;
-                     }
-                 }
-                 if (!tempDocForSort) return 0; // Should not happen if reading succeeded
-                 const offsetA = tempDocForSort.offsetAt(a.range.start);
-                 const offsetB = tempDocForSort.offsetAt(b.range.start);
-                 return offsetB - offsetA; // Sort descending
+                let tempDocForSort: TextDocument | undefined = openDoc;
+                // Logic to get document content if not open (can be complex for TS)
+                // For expression renames, involved files are likely TS files from findRenameLocations
+                if (!tempDocForSort) {
+                    try {
+                        const filePath = URI.parse(uri).fsPath;
+                        const fileContent = fs.readFileSync(filePath, 'utf-8');
+                        tempDocForSort = TextDocument.create(uri, 'typescript', 0, fileContent);
+                    } catch (e) {
+                        log('error', `[onRenameRequest][Expr] Failed to read ${uri} for sorting edits: ${e}`);
+                        return 0;
+                    }
+                }
+                if (!tempDocForSort) return 0; // Should not happen if reading succeeded
+                const offsetA = tempDocForSort.offsetAt(a.range.start);
+                const offsetB = tempDocForSort.offsetAt(b.range.start);
+                return offsetB - offsetA; // Sort descending
             });
             documentChanges.push(TextDocumentEdit.create({ uri, version: docVersion }, sortedEdits));
         }
 
         if (documentChanges.length === 0) {
-             log('info', "[onRenameRequest][Expr] No mappable locations found after processing TS results.");
-             return undefined;
+            log('info', "[onRenameRequest][Expr] No mappable locations found after processing TS results.");
+            return undefined;
         }
 
         log('info', `[onRenameRequest] Expression Symbol Rename: Returning ${documentChanges.length} TextDocumentEdits.`);
@@ -776,7 +776,7 @@ function findNodeByClassName(sourceFile: ts.SourceFile, className: string): ts.C
             return; // Found it, stop searching this branch
         }
         if (!foundNode) { // Don't traverse deeper if already found
-             ts.forEachChild(node, find);
+            ts.forEachChild(node, find);
         }
     }
     find(sourceFile);

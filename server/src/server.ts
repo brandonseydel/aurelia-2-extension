@@ -46,7 +46,8 @@ import {
 import { initializeLogger, log } from './utils/logger';
 import { serverSettings } from './common/settings';
 import { updateVirtualFile } from './core/virtualFileProvider';
-import { scanWorkspaceForAureliaComponents, updateComponentInfoForFile } from './core/componentScanner';
+import { scanWorkspaceForAureliaComponents, updateComponentInfoForFile, scanWorkspaceForHtmlOnlyComponents } from './core/componentScanner';
+import { populateAureliaDocumentsFromComponents } from './core/projectScanner';
 import { createLanguageServiceInstance } from './core/languageServiceProvider';
 import { handleCompletionRequest } from './featureProviders/completionProvider';
 import { handleDefinitionRequest } from './featureProviders/definitionProvider';
@@ -60,6 +61,7 @@ import { handleDocumentFormattingRequest } from './featureProviders/documentForm
 
 // --- State ---
 let languageService: ts.LanguageService;
+let program: ts.Program | undefined;
 let virtualFiles: Map<string, { content: string; version: number }> = new Map(); // virtualUri -> content/version
 let aureliaDocuments: Map<string, AureliaDocumentInfo> = new Map(); // htmlUri -> info
 let strictMode = false;
@@ -74,9 +76,11 @@ const COMPONENT_UPDATE_DEBOUNCE_MS = 500;
 // +++ Initialize Logger +++
 initializeLogger(connection, serverSettings);
 
-connection.onInitialize((params: InitializeParams) => {
+connection.onInitialize(async (params: InitializeParams) => {
   workspaceRoot = params.rootUri ? URI.parse(params.rootUri).fsPath : params.rootPath || process.cwd();
   strictMode = params.initializationOptions?.strictMode ?? false;
+
+  log('info', `[Initialize] Aurelia language server initializing in ${workspaceRoot}.`);
 
   // +++ Call imported createLanguageServiceInstance with dependencies object +++
   languageService = createLanguageServiceInstance({
@@ -86,10 +90,29 @@ connection.onInitialize((params: InitializeParams) => {
     strictMode
   });
 
-  // Scan workspace AFTER language service is created
-  scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents);
-  log('info', `[Initialize] Initial scan complete. Found ${aureliaProjectComponents.size} components/attributes.`);
-  log('info', `[Initialize] Aurelia language server initializing in ${workspaceRoot}.`);
+  program = languageService.getProgram();
+  log('info', `[Initialize] Language service created.`);
+
+  // Step 1a: Scan workspace for TS component definitions 
+  scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents, program);
+  log('info', `[Initialize] Initial TS component scan complete. Found ${aureliaProjectComponents.size} components/attributes.`);
+
+  // <<< Step 1b: Scan workspace for HTML-only component definitions >>>
+  await scanWorkspaceForHtmlOnlyComponents(workspaceRoot, aureliaProjectComponents);
+  log('info', `[Initialize] HTML-only component scan complete. Total components now: ${aureliaProjectComponents.size}.`);
+
+  // Step 2: Populate aureliaDocuments and virtualFiles based on discovered components
+  await populateAureliaDocumentsFromComponents(
+    aureliaProjectComponents,
+    documents,
+    aureliaDocuments,
+    virtualFiles,
+    languageService,
+    connection,
+    viewModelMembersCache,
+    program,
+  );
+  log('info', `[Initialize] Aurelia documents populated. Found ${aureliaDocuments.size} view/vm pairs.`);
 
   const result: InitializeResult = {
     capabilities: {
@@ -170,6 +193,7 @@ documents.onDidChangeContent((change) => {
       connection,
       viewModelMembersCache,
       aureliaProjectComponents,
+      program
     );
   } else if (uri.endsWith('.ts')) {
     // Invalidate cache DIRECTLY when the TS file changes (Keep this)
@@ -196,7 +220,8 @@ documents.onDidChangeContent((change) => {
                 documents,
                 connection,
                 viewModelMembersCache,
-                aureliaProjectComponents
+                aureliaProjectComponents,
+                program
               );
             }
           }, 500);
@@ -204,6 +229,8 @@ documents.onDidChangeContent((change) => {
       }
     }
   }
+  program = languageService.getProgram(); // Update program reference after virtual file update
+
 });
 
 documents.onDidClose(event => {
@@ -226,6 +253,8 @@ connection.onDidChangeConfiguration((_params) => {
 
 // Handle watched file changes for components (with debouncing)
 connection.onDidChangeWatchedFiles((params) => {
+
+  program = languageService.getProgram();
   // +++ Add log to check if handler is called +++
   log('debug', `[onDidChangeWatchedFiles] Handler called. Changes: ${JSON.stringify(params.changes.map(c => ({ uri: c.uri, type: c.type })))}`);
   // ++++++++++++++++++++++++++++++++++++++++++++++
@@ -282,7 +311,7 @@ connection.onDidChangeWatchedFiles((params) => {
           log('debug', `[File Watch Debounce] Processing change for: ${changedFsPath}`)
 
           // 1. Update component info (existing logic)
-          const componentMapChanged = updateComponentInfoForFile(uri, languageService, workspaceRoot, aureliaProjectComponents);
+          const componentMapChanged = updateComponentInfoForFile(uri, languageService, workspaceRoot, aureliaProjectComponents, program);
           if (componentMapChanged) {
             log('info', `[File Watch Debounce] Component map potentially updated by change to ${uri}`);
             anyComponentMapChanged = true; // <<< Set flag if map changed
@@ -305,8 +334,10 @@ connection.onDidChangeWatchedFiles((params) => {
                   documents,
                   connection,
                   viewModelMembersCache,
-                  aureliaProjectComponents
+                  aureliaProjectComponents,
+                  program
                 );
+
               } else {
                 log('debug', `[File Watch Debounce] Watched ViewModel ${changedFsPath} changed, but associated HTML doc ${htmlUriKey} is not open. Virtual file will update on open.`);
               }
@@ -315,6 +346,7 @@ connection.onDidChangeWatchedFiles((params) => {
               // break; // Remove break if multiple HTML files could use the same VM
             }
           }
+
           // +++ END ViewModel Check +++
 
         } catch (e) {
@@ -330,7 +362,7 @@ connection.onDidChangeWatchedFiles((params) => {
         if (componentUpdateTimer) clearTimeout(componentUpdateTimer);
         componentUpdateTimer = setTimeout(() => {
           log('info', '[File Watch Debounce] Triggering full rescan due to processing error.');
-          scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents);
+          scanWorkspaceForAureliaComponents(languageService, workspaceRoot, aureliaProjectComponents, program);
         }, 500);
       }
       // +++ Add check for map changes to trigger update signal +++
@@ -339,7 +371,6 @@ connection.onDidChangeWatchedFiles((params) => {
         // Request the client to refresh semantic tokens
         connection.languages.semanticTokens.refresh();
       }
-
     }, COMPONENT_UPDATE_DEBOUNCE_MS);
   }
 });
@@ -354,7 +385,8 @@ connection.onCompletion((params: CompletionParams): CompletionItem[] | undefined
     aureliaProjectComponents,
     languageService,
     viewModelMembersCache,
-    virtualFiles
+    virtualFiles,
+    program,
   );
 });
 
@@ -366,7 +398,8 @@ connection.onDefinition(async (params: DefinitionParams): Promise<LocationLink[]
     documents,          // Pass state
     aureliaDocuments,   // Pass state
     languageService,    // Pass dependency
-    aureliaProjectComponents // <<< Add the component map here
+    aureliaProjectComponents,
+    program // <<< Add the component map here
   );
 });
 
@@ -379,7 +412,7 @@ connection.languages.semanticTokens.on(async (params: SemanticTokensParams): Pro
     aureliaDocuments,
     virtualFiles, // Pass state
     languageService,
-    aureliaProjectComponents // <<< Pass the component map here
+    aureliaProjectComponents, // <<< Pass the component map here
   );
 });
 
@@ -411,7 +444,8 @@ connection.onPrepareRename(async (params: PrepareRenameParams): Promise<LSPRange
     documents,
     aureliaDocuments,
     languageService,
-    aureliaProjectComponents // <<< Pass the component map here
+    aureliaProjectComponents,
+    languageService.getProgram(),
   );
 });
 
@@ -423,7 +457,8 @@ connection.onRenameRequest(async (params: RenameParams): Promise<WorkspaceEdit |
     documents,
     aureliaDocuments,
     languageService,
-    aureliaProjectComponents
+    aureliaProjectComponents,
+    program,
   );
 });
 
@@ -435,7 +470,8 @@ connection.onHover(async (params: HoverParams): Promise<Hover | undefined> => {
     documents,          // Pass state
     aureliaDocuments,   // Pass state
     languageService,    // Pass dependency
-    aureliaProjectComponents // <<< Add the component map here
+    aureliaProjectComponents,
+    program             // <<< Pass program
   );
 });
 
@@ -457,7 +493,8 @@ connection.onReferences(async (params: ReferenceParams): Promise<LSPLocation[] |
     params,
     documents,
     aureliaDocuments,
-    languageService
+    languageService,
+    aureliaProjectComponents // <<< Pass the component map here
   );
 });
 

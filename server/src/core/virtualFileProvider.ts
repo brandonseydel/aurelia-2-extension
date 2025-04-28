@@ -22,17 +22,19 @@ export function getViewModelMemberNames(
     vmClassName: string,
     vmFsPath: string,
     languageService: ts.LanguageService,
-    viewModelMembersCache: ViewModelMembersCache // <<< Add cache parameter
+    viewModelMembersCache: ViewModelMembersCache,
+    program: ts.Program | undefined
 ): string[] {
+    const cachedEntry = viewModelMembersCache.get(vmFsPath); // Use passed cache
+
     // +++ Cache Check using file content (use passed cache) +++
     let currentContent: string | undefined;
     try {
-        currentContent = ts.sys.readFile(vmFsPath);
+        currentContent = cachedEntry ? ts.sys.readFile(vmFsPath) : undefined; // Read file content for cache check
     } catch (e) {
         log('error', `[getViewModelMemberNames] Error reading file for cache check: ${vmFsPath}`, e);
     }
 
-    const cachedEntry = viewModelMembersCache.get(vmFsPath); // Use passed cache
     if (cachedEntry && currentContent !== undefined && cachedEntry.content === currentContent) {
         log('debug', `[getViewModelMemberNames] Cache HIT for ${vmFsPath} (content match)`);
         return cachedEntry.members;
@@ -45,7 +47,7 @@ export function getViewModelMemberNames(
         log('error', `[getViewModelMemberNames] Language service not available.`);
         return ['message'];
     }
-    const program = languageService.getProgram();
+    program ??= languageService.getProgram();
     if (!program) {
         log('warn', '[getViewModelMemberNames] Could not get program from language service.');
         return ['message'];
@@ -110,7 +112,8 @@ export function updateVirtualFile(
     documents: TextDocuments<TextDocument>,
     connection: Connection,
     viewModelMembersCache: ViewModelMembersCache,
-    aureliaProjectComponentMap: AureliaProjectComponentMap
+    aureliaProjectComponentMap: AureliaProjectComponentMap,
+    program: ts.Program | undefined
 ): boolean {
     const htmlFsPath = URI.parse(htmlUri).fsPath;
     const dirName = path.dirname(htmlFsPath);
@@ -165,7 +168,7 @@ export function updateVirtualFile(
     const { expressions, elementTags } = extractExpressionsFromHtml(htmlContent);
 
     // +++ Pass cache to getViewModelMemberNames +++
-    const memberNames = getViewModelMemberNames(vmClassName, vmFsPath, languageService, viewModelMembersCache);
+    const memberNames = getViewModelMemberNames(vmClassName, vmFsPath, languageService, viewModelMembersCache, program);
 
     // Build Virtual File Content 
     let virtualContent = `// Virtual file for ${htmlUri}\n`;

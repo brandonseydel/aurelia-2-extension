@@ -30,8 +30,8 @@ const tokenTypesLegend = [
     // --- Aurelia Custom Types --- 
     "aureliaElement",    // 10
     "aureliaAttribute",  // 11
-    // "aureliaBinding", // Maybe later, focus on elements/attrs first
-    // Add others as needed
+    "aureliaBinding",    // 12
+    "aureliaExpression"  // 13
 ];
 const tokenModifiersLegend = [
     "declaration",
@@ -44,6 +44,16 @@ export const legend: SemanticTokensLegend = {
     tokenTypes: tokenTypesLegend,
     tokenModifiers: tokenModifiersLegend
 };
+
+// <<< Add decodeClassification Helper >>>
+function decodeClassification(classification: number): { type: number; modifierSet: number } {
+    // Type is lower 8 bits
+    const type = classification & 255; 
+    // Modifiers are remaining bits shifted right
+    const modifierSet = classification >> 8; 
+    return { type, modifierSet };
+}
+// <<< End Helper >>>
 
 /** Helper to get priority (lower is better) */
 function getTokenTypePriority(typeIndex: number): number {
@@ -58,254 +68,195 @@ export async function handleSemanticTokensRequest(
     params: SemanticTokensParams,
     documents: TextDocuments<TextDocument>,
     aureliaDocuments: Map<string, AureliaDocumentInfo>,
-    virtualFiles: Map<string, { content: string; version: number }>, // Need virtualFiles for mapping
+    virtualFiles: Map<string, { content: string; version: number }>,
     languageService: ts.LanguageService,
-    aureliaProjectComponents: AureliaProjectComponentMap // <<< Add the component map parameter
+    aureliaProjectComponents: AureliaProjectComponentMap
 ): Promise<SemanticTokens> {
     const uri = params.textDocument.uri;
     const document = documents.get(uri);
     const docInfo = aureliaDocuments.get(uri);
 
     if (!document || !docInfo || !languageService) {
-        return { data: [] }; // Return empty tokens if document/info/service not available
-    }
-
-    log('debug', `[semanticTokens] Request for ${uri}`);
-    const builder = new SemanticTokensBuilder();
-    const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
-    
-    try {
-        log('debug', `[semanticTokens] Getting classifications for: ${virtualFsPath}`);
-        const classifications = languageService.getEncodedSemanticClassifications(virtualFsPath, {
-            start: 0,
-            length: virtualFiles.get(docInfo.virtualUri)?.content.length ?? 0
-        }, ts.SemanticClassificationFormat.TwentyTwenty);
-
-        if (!classifications || classifications.spans.length === 0) {
-            log('warn', `[semanticTokens] No classifications returned from TS for ${virtualFsPath}`);
-            return { data: [] };
-        }
-
-        log('info', `[semanticTokens] Received ${classifications.spans.length / 3} encoded spans from TS.`);
-
-        // <<< Remove classTokenTypeIndex, get Aurelia indices >>>
-        // const classTokenTypeIndex = legend.tokenTypes.indexOf("class"); 
-        const aureliaElementTypeIndex = tokenTypesLegend.indexOf("aureliaElement");
-        const aureliaAttributeTypeIndex = tokenTypesLegend.indexOf("aureliaAttribute");
-
-        // +++ Create Set of ranges occupied by custom element/attribute tag names +++
-        const customTagNameRanges = new Set<string>(); // Renamed for clarity
-        if (docInfo.elementTagLocations) {
-            for (const tag of docInfo.elementTagLocations) {
-                const componentInfo = aureliaProjectComponents.get(tag.name);
-                // <<< Check for element OR attribute >>>
-                if (componentInfo && (componentInfo.type === 'element' || componentInfo.type === 'attribute')) {
-                    // --- Process Start Tag ---
-                    try {
-                        const startTagStartOffset = tag.startTagRange.startOffset;
-                        const startTagEndOffset = tag.startTagRange.endOffset;
-                        const startTagText = document.getText().substring(startTagStartOffset, startTagEndOffset);
-                        const tagNameIndex = startTagText.indexOf(tag.name);
-
-                        if (tagNameIndex !== -1) {
-                            const tagNameLength = tag.name.length;
-                            const tagNameStartOffset = startTagStartOffset + tagNameIndex;
-                            const length = tagNameLength;
-                            
-                            if (length > 0) {
-                                const startPos = document.positionAt(tagNameStartOffset);
-                                const rangeString = `${startPos.line}:${startPos.character}:${length}`;
-                                customTagNameRanges.add(rangeString);
-                                log('debug', `[semanticTokens] Pre-calculated custom START TAG NAME range: ${tag.name} at ${rangeString}`);
-                            }
-                        } else {
-                            log('warn', `[semanticTokens] Pre-calc: Could not find start tag name "${tag.name}" within start tag text: "${startTagText}"`);
-                        }
-                    } catch(e) {
-                         log('error', `[semanticTokens] Error pre-calculating start tag range for "${tag.name}": ${e}`);
-                    }
-
-                    // --- Process End Tag (if it exists, for elements) ---
-                    if (componentInfo && componentInfo.type === 'element' && tag.endTagRange) {
-                         try {
-                            const endTagStartOffset = tag.endTagRange.startOffset;
-                            const endTagEndOffset = tag.endTagRange.endOffset;
-                            const endTagText = document.getText().substring(endTagStartOffset, endTagEndOffset);
-                            // Tag name starts after '</'
-                            const tagNameIndex = endTagText.indexOf(tag.name);
-
-                            if (tagNameIndex !== -1 && tagNameIndex === 2) { // Ensure it follows </
-                                const tagNameLength = tag.name.length;
-                                const tagNameStartOffset = endTagStartOffset + tagNameIndex;
-                                const length = tagNameLength;
-                                
-                                if (length > 0) {
-                                    const startPos = document.positionAt(tagNameStartOffset);
-                                    const rangeString = `${startPos.line}:${startPos.character}:${length}`;
-                                    customTagNameRanges.add(rangeString);
-                                    log('debug', `[semanticTokens] Pre-calculated custom END TAG NAME range: ${tag.name} at ${rangeString}`);
-                                }
-                            } else {
-                                log('warn', `[semanticTokens] Pre-calc: Could not find end tag name "${tag.name}" at expected position in end tag text: "${endTagText}"`);
-                            }
-                        } catch(e) {
-                            log('error', `[semanticTokens] Error pre-calculating end tag range for "${tag.name}": ${e}`);
-                        }
-                    }
-                }
-            }
-        }
-        log('debug', `[semanticTokens] Found ${customTagNameRanges.size} specific custom tag name ranges (start/end).`);
-        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-        // +++ Push Custom Element/Attribute Tokens FIRST +++
-        if (docInfo.elementTagLocations) {
-            log('debug', `[semanticTokens] >>> Running Preemptive Custom Token Push <<<`);
-            try {
-                for (const tag of docInfo.elementTagLocations) {
-                    const componentInfo = aureliaProjectComponents.get(tag.name);
-                    // <<< Determine correct Aurelia type index >>>
-                    let targetTypeIndex = -1;
-                    if (componentInfo && componentInfo.type === 'element' && aureliaElementTypeIndex !== -1) {
-                        targetTypeIndex = aureliaElementTypeIndex;
-                    } else if (componentInfo && componentInfo.type === 'attribute' && aureliaAttributeTypeIndex !== -1) {
-                        targetTypeIndex = aureliaAttributeTypeIndex;
-                    }
-                    
-                    if (targetTypeIndex !== -1) { // If it's a known Aurelia element or attribute
-                         // --- Push Start Tag Token ---
-                         const startTagStartOffset = tag.startTagRange.startOffset;
-                         const startTagEndOffset = tag.startTagRange.endOffset;
-                         const startTagText = document.getText().substring(startTagStartOffset, startTagEndOffset);
-                         const startTagNameIndex = startTagText.indexOf(tag.name);
-
-                         if (startTagNameIndex !== -1) {
-                             const tagNameLength = tag.name.length;
-                             const tagNameStartOffset = startTagStartOffset + startTagNameIndex;
-                             if (tagNameLength > 0) {
-                                 const startPos: Position = document.positionAt(tagNameStartOffset);
-                                 log('debug', `[semanticTokens] Preemptive Push: Pushing '${tokenTypesLegend[targetTypeIndex]}' token for START tag "${tag.name}" at ${startPos.line}:${startPos.character} (Length: ${tagNameLength})`);
-                                 builder.push(startPos.line, startPos.character, tagNameLength, targetTypeIndex, 0);
-                             }
-                         }
-                        
-                         // --- Push End Tag Token (if element) ---
-                         if (componentInfo && componentInfo.type === 'element' && tag.endTagRange) {
-                             const endTagStartOffset = tag.endTagRange.startOffset;
-                             const endTagEndOffset = tag.endTagRange.endOffset;
-                             const endTagText = document.getText().substring(endTagStartOffset, endTagEndOffset);
-                             const endTagNameIndex = endTagText.indexOf(tag.name); // Should be 2
-
-                             if (endTagNameIndex === 2) { // Check it starts after </
-                                 const tagNameLength = tag.name.length;
-                                 const tagNameStartOffset = endTagStartOffset + endTagNameIndex;
-                                 if (tagNameLength > 0) {
-                                     const startPos: Position = document.positionAt(tagNameStartOffset);
-                                     log('debug', `[semanticTokens] Preemptive Push: Pushing '${tokenTypesLegend[targetTypeIndex]}' token for END tag "${tag.name}" at ${startPos.line}:${startPos.character} (Length: ${tagNameLength})`);
-                                     builder.push(startPos.line, startPos.character, tagNameLength, targetTypeIndex, 0);
-                                 }
-                             }
-                         }
-                    }
-                }
-            } catch (e) {
-                log('error', `[semanticTokens] Error during preemptive custom tag push: ${e}`)
-            }
-        }
-        // +++ End Preemptive Custom Token Push +++
-
-
-    } catch (e) {
-        log('error', `[semanticTokens] Error getting semantic classifications: ${e}`);
         return { data: [] };
     }
 
-    log('info', `[semanticTokens] Built tokens for ${uri}`);
+    log('debug', `[semanticTokens] Request for ${uri}`);
+    log('debug', `[semanticTokens] Using legend token types: ${JSON.stringify(legend.tokenTypes)}`);
+    const builder = new SemanticTokensBuilder();
+    const virtualFsPath = URI.parse(docInfo.virtualUri).fsPath;
+    
+    // Get Aurelia-specific token type indices
+    const aureliaElementTypeIndex = tokenTypesLegend.indexOf("aureliaElement");
+    const aureliaAttributeTypeIndex = tokenTypesLegend.indexOf("aureliaAttribute");
+    const aureliaExpressionTypeIndex = legend.tokenTypes.indexOf('aureliaExpression');
+    log('debug', `[semanticTokens] Index for 'aureliaExpression': ${aureliaExpressionTypeIndex}`);
 
+    // Set to track ranges covered by specific Aurelia tokens to avoid overlap
+    const customTokenRanges = new Set<string>();
+
+    // +++ 1. Push Custom Element/Attribute Tokens FIRST +++
+    if (docInfo.elementTagLocations) {
+        log('debug', `[semanticTokens] Pushing custom element/attribute tag tokens`);
+        try {
+            for (const tag of docInfo.elementTagLocations) {
+                const componentInfo = aureliaProjectComponents.get(tag.name);
+                let targetTypeIndex = -1;
+                if (componentInfo?.type === 'element' && aureliaElementTypeIndex !== -1) {
+                    targetTypeIndex = aureliaElementTypeIndex;
+                } else if (componentInfo?.type === 'attribute' && aureliaAttributeTypeIndex !== -1) {
+                    targetTypeIndex = aureliaAttributeTypeIndex;
+                }
+                
+                if (targetTypeIndex !== -1) { 
+                    // --- Push Start Tag Token ---
+                    const startTagStartOffset = tag.startTagRange.startOffset;
+                    const startTagEndOffset = tag.startTagRange.endOffset;
+                    const startTagText = document.getText().substring(startTagStartOffset, startTagEndOffset);
+                    const startTagNameIndex = startTagText.indexOf(tag.name);
+
+                    if (startTagNameIndex !== -1) {
+                        const tagNameLength = tag.name.length;
+                        const tagNameStartOffset = startTagStartOffset + startTagNameIndex;
+                        if (tagNameLength > 0) {
+                            const startPos: Position = document.positionAt(tagNameStartOffset);
+                            const rangeString = `${startPos.line}:${startPos.character}:${tagNameLength}`;
+                            builder.push(startPos.line, startPos.character, tagNameLength, targetTypeIndex, 0);
+                            customTokenRanges.add(rangeString); // Mark this range as covered
+                            log('debug', `[semanticTokens] Pushed custom START tag token: \"${tag.name}\" at ${rangeString}`);
+                        }
+                    }
+                    
+                    // --- Push End Tag Token (if element) ---
+                    if (componentInfo?.type === 'element' && tag.endTagRange) {
+                        const endTagStartOffset = tag.endTagRange.startOffset;
+                        const endTagEndOffset = tag.endTagRange.endOffset;
+                        const endTagText = document.getText().substring(endTagStartOffset, endTagEndOffset);
+                        const endTagNameIndex = endTagText.indexOf(tag.name);
+
+                        if (endTagNameIndex === 2) { 
+                            const tagNameLength = tag.name.length;
+                            const tagNameStartOffset = endTagStartOffset + endTagNameIndex;
+                            if (tagNameLength > 0) {
+                                const startPos: Position = document.positionAt(tagNameStartOffset);
+                                const rangeString = `${startPos.line}:${startPos.character}:${tagNameLength}`;
+                                builder.push(startPos.line, startPos.character, tagNameLength, targetTypeIndex, 0);
+                                customTokenRanges.add(rangeString); // Mark this range as covered
+                                log('debug', `[semanticTokens] Pushed custom END tag token: \"${tag.name}\" at ${rangeString}`);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            log('error', `[semanticTokens] Error during preemptive custom tag push: ${e}`)
+        }
+    }
+
+    // +++ 2. Push Interpolation Delimiter Tokens +++
+    if (aureliaExpressionTypeIndex !== -1) {
+        log('debug', `[semanticTokens] Processing interpolation delimiters (type index: ${aureliaExpressionTypeIndex})`);
+        docInfo.mappings.forEach(mapping => {
+            if (mapping.type === 'interpolation') {
+                log('debug', `[semanticTokens] Found interpolation mapping: HTML [${mapping.htmlExpressionLocation.startOffset}-${mapping.htmlExpressionLocation.endOffset}]`);
+                // ${ 
+                const startOffset = mapping.htmlExpressionLocation.startOffset - 2;
+                if (startOffset >= 0) { 
+                    const startPos = document.positionAt(startOffset);
+                    log('debug', `[semanticTokens] Pushing ${tokenTypesLegend[aureliaExpressionTypeIndex]} for \`$\` at ${startPos.line}:${startPos.character}`);
+                    builder.push(startPos.line, startPos.character, 2, aureliaExpressionTypeIndex, 0);
+                } else {
+                    log('warn', `[Semantic Tokens] Calculated negative start offset for interpolation punctuation: ${startOffset}`);
+                }
+                // }
+                const endOffset = mapping.htmlExpressionLocation.endOffset;
+                if (endOffset <= document.getText().length) { 
+                    const endPos = document.positionAt(endOffset);
+                    log('debug', `[semanticTokens] Pushing ${tokenTypesLegend[aureliaExpressionTypeIndex]} for \`$\` at ${endPos.line}:${endPos.character}`);
+                    builder.push(endPos.line, endPos.character, 1, aureliaExpressionTypeIndex, 0);
+                } else {
+                    log('warn', `[Semantic Tokens] Calculated out-of-bounds end offset for interpolation punctuation: ${endOffset}`);
+                }
+            }
+        });
+    } else {
+        log('warn', `[semanticTokens] 'aureliaExpression' type index not found in legend. Skipping delimiter tokens.`);
+    }
+
+    // +++ 3. Process Mappings for Virtual File Content +++
+    log('debug', `[semanticTokens] Processing virtual file content via mappings`);
+    docInfo.mappings.forEach(mapping => {
+        const virtualUri = docInfo.virtualUri;
+        const virtualDoc = virtualFiles.get(virtualUri);
+        if (!virtualDoc) return;
+
+        try {
+            const startVirtualOffset = mapping.virtualValueRange.start;
+            const endVirtualOffset = mapping.virtualValueRange.end;
+            const length = endVirtualOffset - startVirtualOffset;
+            if (length <= 0) return;
+
+            const virtualClassifications = languageService.getEncodedSemanticClassifications(virtualFsPath, {
+                start: startVirtualOffset,
+                length: length
+            }, ts.SemanticClassificationFormat.TwentyTwenty);
+
+            if (!virtualClassifications || virtualClassifications.spans.length === 0) return;
+
+            for (let i = 0; i < virtualClassifications.spans.length; i += 3) {
+                const virtualSpanStart = startVirtualOffset + virtualClassifications.spans[i];
+                const virtualSpanLength = virtualClassifications.spans[i + 1];
+                const virtualSpanEnd = virtualSpanStart + virtualSpanLength;
+                const classification = virtualClassifications.spans[i + 2];
+                const { type: tokenTypeIndex, modifierSet } = decodeClassification(classification);
+
+                // Map virtual span back to HTML range
+                let htmlStartOffset: number | undefined;
+                let htmlEndOffset: number | undefined;
+                const spanStartsInTransform = mapping.transformations.find(t => virtualSpanStart >= t.virtualRange.start && virtualSpanStart < t.virtualRange.end);
+                const spanEndsInTransform = mapping.transformations.find(t => virtualSpanEnd > t.virtualRange.start && virtualSpanEnd <= t.virtualRange.end);
+
+                if (spanStartsInTransform && spanStartsInTransform === spanEndsInTransform) {
+                    htmlStartOffset = spanStartsInTransform.htmlRange.start;
+                    htmlEndOffset = spanStartsInTransform.htmlRange.end;
+                } else if (spanStartsInTransform || spanEndsInTransform) {
+                    continue; // Skip tokens spanning transformations for now
+                } else {
+                    let accumulatedOffsetDeltaBeforeStart = 0;
+                    for (const transform of mapping.transformations) {
+                        if (transform.virtualRange.end <= virtualSpanStart) {
+                            accumulatedOffsetDeltaBeforeStart += transform.offsetDelta;
+                        }
+                    }
+                    const baseHtmlOffset = mapping.htmlExpressionLocation.startOffset;
+                    const baseVirtualOffset = mapping.virtualValueRange.start;
+                    htmlStartOffset = baseHtmlOffset + (virtualSpanStart - baseVirtualOffset) - accumulatedOffsetDeltaBeforeStart;
+                    htmlEndOffset = htmlStartOffset + virtualSpanLength;
+                }
+
+                if (htmlStartOffset !== undefined && htmlEndOffset !== undefined && htmlStartOffset < htmlEndOffset) {
+                    const htmlExprStart = mapping.htmlExpressionLocation.startOffset;
+                    const htmlExprEnd = mapping.htmlExpressionLocation.endOffset;
+                    const clampedHtmlStart = Math.max(htmlStartOffset, htmlExprStart);
+                    let clampedHtmlEnd = Math.min(htmlEndOffset, htmlExprEnd);
+                    clampedHtmlEnd = Math.max(clampedHtmlStart, clampedHtmlEnd);
+                    const finalLength = clampedHtmlEnd - clampedHtmlStart;
+
+                    if (finalLength > 0) {
+                        const startPos = document.positionAt(clampedHtmlStart);
+                        const rangeString = `${startPos.line}:${startPos.character}:${finalLength}`;
+                        if (customTokenRanges.has(rangeString)) {
+                            continue; // Don't overwrite specific Aurelia element/attribute tokens
+                        }
+                        builder.push(startPos.line, startPos.character, finalLength, tokenTypeIndex, modifierSet);
+                    }
+                }
+            }
+        } catch (e) {
+            log('error', `[semanticTokens] Error processing mapping or getting virtual tokens: ${e}`);
+        }
+    });
+
+    log('info', `[semanticTokens] Built tokens for ${uri}`);
     const builtTokens = builder.build();
-    log('debug', `[semanticTokens] Final built data: ${JSON.stringify(builtTokens.data)}`); // <<< Log the raw data array
     return builtTokens;
 }
-
-
-/**
- * Helper to decode TS Semantic Classification
- * IMPORTANT: This relies on internal TS classification types/values which might change.
- */
-function decodeToken(classification: number): { typeIndex: number; modifierSet: number } | undefined {
-    // +++ Log raw classification +++
-    log('debug', `[decodeToken] Received raw classification: ${classification}`);
-    // +++++++++++++++++++++++++++++++
-
-    const semanticClassificationFormatShift = 8;
-    // Hardcoding common values as enum members might vary
-    const classificationTypeMethodName = 11;
-    const classificationTypeFunctionName = 10;
-    const classificationTypePropertyName = 9;
-    const classificationTypeVariableName = 7;
-    const classificationTypeClassName = 1; // Added based on usage below
-    const classificationTypeInterfaceName = 3; // Added based on usage below
-    const classificationTypeEnumName = 2; // Added based on usage below
-    const classificationTypeModuleName = 4; // Added based on usage below
-    const classificationTypeTypeAliasName = 5; // Added based on usage below
-    const classificationTypeTypeParameterName = 6; // Added based on usage below
-    const classificationTypeParameterName = 8; // Added based on usage below
-    const classificationTypeKeyword = 13; // Added based on usage below
-    const classificationTypeIdentifier = 20; // Added based on usage below
-
-    if (classification > semanticClassificationFormatShift) {
-        const type = (classification >> semanticClassificationFormatShift) - 1;
-        const modifier = classification & ((1 << semanticClassificationFormatShift) - 1);
-
-        let typeIndex: number | undefined = undefined;
-        switch (type) {
-            case classificationTypeMethodName: // 11
-                typeIndex = legend.tokenTypes.indexOf("method");
-                break;
-            case classificationTypeFunctionName: // 10
-                typeIndex = legend.tokenTypes.indexOf("function");
-                break;
-            case classificationTypePropertyName: // 9
-                typeIndex = legend.tokenTypes.indexOf("property");
-                break;
-            case classificationTypeVariableName: // 7
-                typeIndex = legend.tokenTypes.indexOf("variable");
-                break;
-            // Standard enums (use our constants)
-            case classificationTypeClassName:
-                typeIndex = legend.tokenTypes.indexOf("class");
-                break;
-            case classificationTypeEnumName: typeIndex = legend.tokenTypes.indexOf("enumMember"); break;
-            case classificationTypeInterfaceName: typeIndex = legend.tokenTypes.indexOf("interface"); break;
-            case classificationTypeModuleName: typeIndex = legend.tokenTypes.indexOf("namespace"); break;
-            case classificationTypeTypeAliasName: typeIndex = legend.tokenTypes.indexOf("type"); break;
-            case classificationTypeTypeParameterName: typeIndex = legend.tokenTypes.indexOf("typeParameter"); break;
-            case classificationTypeParameterName: typeIndex = legend.tokenTypes.indexOf("parameter"); break;
-            case classificationTypeKeyword: typeIndex = legend.tokenTypes.indexOf("keyword"); break;
-            case classificationTypeIdentifier:
-                // Default to variable if it's an identifier and wasn't mapped otherwise
-                if (typeIndex === undefined) typeIndex = legend.tokenTypes.indexOf("variable");
-                break;
-        }
-
-        if (typeIndex === undefined || typeIndex === -1) {
-            log('debug', `[decodeToken] Unmapped classification type: ${type} (Raw: ${classification})`);
-            return undefined;
-        }
-
-        let modifierSet = 0;
-        const tokenClassDeclarationMask = 256;
-        const tokenClassReadonlyMask = 512;
-        const declarationModifierIndex = legend.tokenModifiers.indexOf("declaration");
-        const readonlyModifierIndex = legend.tokenModifiers.indexOf("readonly");
-        if (modifier & tokenClassDeclarationMask && declarationModifierIndex !== -1) {
-            modifierSet |= (1 << declarationModifierIndex);
-        }
-        if (modifier & tokenClassReadonlyMask && readonlyModifierIndex !== -1) {
-            modifierSet |= (1 << readonlyModifierIndex);
-        }
-
-        return { typeIndex, modifierSet };
-    }
-    return undefined;
-} 

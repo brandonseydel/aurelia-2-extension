@@ -42,7 +42,8 @@ export function handleCompletionRequest(
     aureliaProjectComponents: AureliaProjectComponentMap,
     languageService: ts.LanguageService,
     viewModelMembersCache: ViewModelMembersCache,
-    virtualFiles: Map<string, { content: string; version: number }>
+    virtualFiles: Map<string, { content: string; version: number }>,
+    program: ts.Program | undefined,
 ): CompletionItem[] | undefined {
     const htmlUriString = params.textDocument.uri;
     const document = documents.get(htmlUriString);
@@ -257,18 +258,18 @@ export function handleCompletionRequest(
             }
             else if (!provideAttributeCompletions && !provideElementCompletions && (charBeforeCursor === ' ' || triggerChar === undefined)) {
                 const textBeforeOffset = document.getText(LSPRange.create(Position.create(0, 0), params.position));
-                
+
                 // Find the last opening bracket before the cursor
                 const lastBracketIndex = textBeforeOffset.lastIndexOf('<');
-                
+
                 if (lastBracketIndex !== -1) {
                     // Extract the text from the last bracket to the cursor
                     const potentialTagStart = textBeforeOffset.substring(lastBracketIndex);
-                    
+
                     // CORRECTED Regex: Check if substring STARTS with <tag-name followed by a space.
                     // Removed the '+' and the '$' end anchor.
                     const tagMatch = potentialTagStart.match(/^<([a-zA-Z0-9-]+)\s/);
-                    
+
                     if (tagMatch) {
                         const tagNameFromRegex = tagMatch[1];
                         log('debug', `[onCompletion] HTML Context: Triggering NEW attribute completions based on refined fallback check (substring=\'${potentialTagStart}\'). Tag found: ${tagNameFromRegex}`);
@@ -280,7 +281,7 @@ export function handleCompletionRequest(
                         log('debug', `[onCompletion] HTML Context: Refined fallback check: Substring '${potentialTagStart}' did not match /^<([a-zA-Z0-9-]+)\\s/`);
                     }
                 } else {
-                     log('debug', `[onCompletion] HTML Context: Refined fallback check: No '<' found before cursor.`);
+                    log('debug', `[onCompletion] HTML Context: Refined fallback check: No '<' found before cursor.`);
                 }
             }
 
@@ -340,7 +341,7 @@ export function handleCompletionRequest(
                         componentInfo.bindables.forEach(bindableInfo => {
                             // Determine the attribute name to suggest
                             const attributeNameToSuggest = bindableInfo.attributeName ?? toKebabCase(bindableInfo.propertyName);
-                            
+
                             // Suggest the base attribute name
                             htmlCompletions.push({
                                 label: attributeNameToSuggest,
@@ -350,7 +351,7 @@ export function handleCompletionRequest(
                                 detail: `Bindable property '${bindableInfo.propertyName}' for <${currentTagName}>`,
                                 sortText: `0_bindable_${attributeNameToSuggest}`
                             });
-                            
+
                             // Suggest suffixed versions (.bind, .one-way, etc.)
                             AURELIA_BINDING_SUFFIXES.forEach(suffix => {
                                 if (suffix !== '.ref') {
@@ -366,7 +367,7 @@ export function handleCompletionRequest(
                             });
                         });
                     } else {
-                         log('debug', `[onCompletion] Current tag <${currentTagName}> not found as element or has no bindables.`);
+                        log('debug', `[onCompletion] Current tag <${currentTagName}> not found as element or has no bindables.`);
                     }
                 } else {
                     log('debug', '[onCompletion] No current tag name identified for bindable completions.');
@@ -389,7 +390,7 @@ export function handleCompletionRequest(
 
     // --- Branch 2: Completion INSIDE an Aurelia expression --- 
     if (docInfo && activeMapping) {
-        const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache);
+        const memberNames = getViewModelMemberNames(docInfo.vmClassName, docInfo.vmFsPath, languageService, viewModelMembersCache, program);
 
         let virtualCompletionOffset = mapHtmlOffsetToVirtual(offset, activeMapping);
 
